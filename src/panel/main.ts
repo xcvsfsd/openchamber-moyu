@@ -47,7 +47,7 @@ button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1}
 .nrow.chan .dot{color:var(--oc-muted,#999)}
 /* 中：原生聊天列 */
-main{flex:1;display:flex;flex-direction:column;min-width:0;border-left:1px solid var(--oc-border,#8883)}
+main{flex:1;display:flex;flex-direction:column;min-width:0}
 .hd .crumb{font-weight:700}
 button,select,input,textarea{font:inherit}
 .btn{padding:4px 10px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:var(--oc-fg,inherit);cursor:pointer;white-space:nowrap}
@@ -56,11 +56,13 @@ button:disabled{opacity:.5}
 #msg:empty{display:none}
 #msg{padding:0 12px}#msg .err{margin-top:8px}
 .err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
-#thread{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:18px;max-width:900px;width:100%;margin:0 auto}
+#thread{flex:1;overflow-y:auto;padding:18px 24px;display:flex;flex-direction:column;gap:18px;max-width:980px;width:100%;margin:0 auto}
+.act{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--oc-muted,#999)}
+.act .sep{opacity:.6}
 .msg{display:flex;flex-direction:column;gap:2px;max-width:100%}
 .msg .bubble{border-radius:12px;padding:9px 14px;word-break:break-word;line-height:1.7;font-size:14px}
 .msg.mine{align-items:flex-end}
-.msg.mine .bubble{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);max-width:70%}
+.msg.mine .bubble{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);max-width:80%}
 .msg.theirs .bubble{padding:2px;max-width:100%}
 .msg .meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--oc-muted,#999);margin-top:5px}
 .msg .meta .op{font-size:11px;border:1px solid var(--oc-border,#8888);border-radius:999px;padding:0 7px}
@@ -93,9 +95,7 @@ body[data-narrow="1"] aside{width:100%;max-width:none;max-height:none;border-bot
 body[data-narrow="1"] main{display:none}
 /* 宽 = 阅读器：只留正文，目录去 rail 选 */
 body:not([data-narrow="1"]) aside{display:none}
-body:not([data-narrow="1"]) #threadbar{display:flex}
-#threadbar{display:none;padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);align-items:center;gap:8px}
-#threadbar .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--oc-muted,#999);font-size:12px}
+
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
 #cfgver{padding:2px 10px 6px;font-size:11px}
@@ -114,7 +114,6 @@ body:not([data-narrow="1"]) #threadbar{display:flex}
   <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
 </aside>
 <main>
-  <div id="threadbar"><button class="btn" id="b-back" title="返回列表">‹</button><span class="tt" id="topic-crumb"></span></div>
   <div id="msg"></div>
   <div id="thread"></div>
   <div id="composer">
@@ -132,7 +131,7 @@ const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 const draftEl = $('draft') as unknown as HTMLTextAreaElement;
 const hintEl = $('hint'), posEl = $('pos');
 
-const BUILD = 'v0.3.1-native11';
+const BUILD = 'v0.3.2-act11';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -221,8 +220,7 @@ const paintList = (): void => {
   paintChannels();
   ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}` : '';
   topicsEl.innerHTML = '';
-  for (const t of topics) {
-    const d = document.createElement('div');
+  for (const t of topics) {    const d = document.createElement('div');
     d.className = 'nrow' + (current?.id === t.id ? ' active' : '');
     d.innerHTML = `<span class="tt">${esc(t.title)}<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${esc(t.author)}${t.channel ? ` · ${esc(t.channel)}` : ''} · ${t.replies ?? '-'}回复 · ${rel(t.time)}</span></span>`;
     const go = document.createElement('button');
@@ -234,8 +232,6 @@ const paintList = (): void => {
     d.onclick = () => void openTopic(t);
     topicsEl.appendChild(d);
   }
-  const crumb = $('topic-crumb');
-  crumb.textContent = current ? `/ ${current.title.slice(0, 24)}` : '';
 };
 
 // 在会话中打开：话题变成左侧原生聊天，正文进上下文，可直接跟模型聊（moyu 隐喻落地）
@@ -324,7 +320,10 @@ const paintThread = async (animate: boolean): Promise<void> => {
   threadEl.innerHTML = '';
   posEl.textContent = '';
   if (!thread) { paintThreadPlaceholder(); return; }
-  const cards: string[] = [];
+  // 原生“活动行”：帖子上下文（作者·频道·回复数·时间）
+  const t = thread.topic;
+  const act = `<div class="act"><span>帖子</span><span class="sep">›</span><span>${esc(t.author)}${t.channel ? ` · ${esc(t.channel)}` : ''} · ${t.replies ?? '-'}回复 · ${rel(t.time)}</span></div>`;
+  const cards: string[] = [act];
   if (thread.opening) cards.push(msgCard(true, thread.opening.author, thread.opening.time, thread.opening.html, ''));
   thread.posts.forEach((p) => {
     const tags = `${p.byAuthor ? '<span class="op">楼主</span>' : ''}<span>#${p.floor}</span>${p.replyTo ? `<span>回复 #${p.replyTo}</span>` : ''}${p.likes !== null ? `<span>❤${p.likes}</span>` : ''}`;
@@ -501,8 +500,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { vo
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 paintThreadPlaceholder();
-$('b-back').onclick = () => { document.body.dataset.view = 'list'; };
-// 窄面板/窄窗：列表/正文二选一（rail 里不硬挤），宽屏忽略 view
+// 窄 rail 只做导航器（main 隐藏），宽页只做阅读器（aside 隐藏）
 const fitNarrow = (): void => {
   const w = document.documentElement.clientWidth;
   document.body.dataset.narrow = w > 0 && w < 700 ? '1' : '';

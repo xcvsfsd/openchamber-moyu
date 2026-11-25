@@ -127,7 +127,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.5.2-rail';
+const BUILD = 'v0.5.3-norush';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -222,6 +222,7 @@ const switchCommunity = async (id: CommunityId): Promise<void> => {
   await storeSet('moyu:community', community);
   channel = info().channels[0]!.id;
   current = null; thread = null; topics = []; listAt = 0;
+  (document.querySelector('#cfg-out') as HTMLElement).textContent = '';
   const v = await storeGet(`moyu:prefs:${community}`) as Prefs | undefined;
   if (v && typeof v.stream === 'boolean') prefs = v;
   const ch = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
@@ -368,8 +369,6 @@ const pollList = async (force = false): Promise<void> => {
     topics = j.topics ?? [];
     listAt = Date.now();
     paintList();
-    // 进来即有内容：首次加载自动打开第一帖
-    if (!current && topics.length > 0) { void openTopic(topics[0]!); return; }
   } catch (e) {
     const code = (e as { code?: string })?.code;
     const hint = code === 'NO_SERVICE' ? '（service 没起来：去 设置→扩展 看阅读卡片上的 service 错误）'

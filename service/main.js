@@ -518,9 +518,14 @@ var tophubList = async (community, proxy) => {
   const board = TOPHUB_BOARDS[community];
   if (!board)
     throw new Error("没有这个热榜");
-  const r = await timedFetch(`https://tophub.today/n/${board.hash}`, proxy);
+  let r;
+  try {
+    r = await timedFetch(`https://tophub.today/n/${board.hash}`, proxy);
+  } catch {
+    throw new Error("tophub 暂时连不上（对侧限流/拦截），过几分钟按 R 再试；V2EX / linux.do / InfoQ 可用");
+  }
   if (r.status !== 200)
-    throw new Error(`热榜返回了 ${r.status}`);
+    throw new Error(`热榜返回了 ${r.status}（对侧限流时过几分钟按 R 再试）`);
   const body = await r.text();
   const rows = body.match(/<tr>[\s\S]*?<\/tr>/g) ?? [];
   const out = [];
@@ -614,9 +619,15 @@ var cachedList = async (community, channel, proxy) => {
   const hit = listCache.get(key);
   if (hit && Date.now() - hit.at < LIST_CACHE_TTL_MS)
     return { topics: hit.topics, cached: true };
-  const topics = await fetchList(community, channel, proxy);
-  listCache.set(key, { at: Date.now(), topics });
-  return { topics, cached: false };
+  try {
+    const topics = await fetchList(community, channel, proxy);
+    listCache.set(key, { at: Date.now(), topics });
+    return { topics, cached: false };
+  } catch (e) {
+    if (hit && hit.topics.length > 0)
+      return { topics: hit.topics, cached: true };
+    throw e;
+  }
 };
 var fetchList = async (community, channel, proxy) => {
   if (HOT_IDS.includes(community)) {

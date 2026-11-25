@@ -117,7 +117,7 @@ body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
   <div class="sec">社区</div><div id="chanrow"><div id="communities"></div></div>
-  <div class="sec">频道</div><div id="chanrow2"><div id="channels"></div></div>
+  <div class="sec" id="sec-channels">频道</div><div id="chanrow2"><div id="channels"></div></div>
   <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="msg2"></div><div id="topics"></div>
   <div class="sec">配置</div>
   <div id="cfgside">
@@ -139,7 +139,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.7.0-altsrc';
+const BUILD = 'v0.7.1-nochan';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -245,6 +245,11 @@ const switchCommunity = async (id: CommunityId): Promise<void> => {
 };
 
 const paintChannels = (): void => {
+  // 单频道的源（榜单类）藏起整行，只剩一个选项没有意义
+  const single = info().channels.length <= 1;
+  ($('sec-channels') as HTMLElement).style.display = single ? 'none' : '';
+  ($('chanrow2') as HTMLElement).style.display = single ? 'none' : '';
+  if (single) return;
   const box = $('channels');
   box.innerHTML = '';
   for (const c of info().channels) {

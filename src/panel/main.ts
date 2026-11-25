@@ -127,7 +127,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.5.1-flat';
+const BUILD = 'v0.5.2-rail';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 

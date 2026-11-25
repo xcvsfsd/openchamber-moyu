@@ -1,17 +1,32 @@
 {
   "name": "openchamber-moyu",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
   "description": "摸鱼阅读：V2EX / linux.do / 知乎 / 头条 / CSDN / 开源中国 / InfoQ（tophub 聚合 + 官网直出）",
   "openchamber": {
     "apiVersion": 1,
-    "engines": { "openchamber": ">=2.7.2" },
+    "engines": {
+      "openchamber": ">=2.7.2"
+    },
     "contributes": {
-      "panel": { "id": "moyu-reader", "name": "阅读", "icon": "assets/icon.svg", "entry": "panel/index.html" },
-      "origins": ["https://linux.do", "https://cdn.ldstatic.com", "https://www.v2ex.com", "https://cdn.v2ex.com"],
-      "service": { "entry": "service/main.js", "runtime": "host" }
+      "panel": {
+        "id": "moyu-reader",
+        "name": "阅读",
+        "icon": "assets/icon.svg",
+        "entry": "panel/index.html"
+      },
+      "origins": [
+        "https://linux.do",
+        "https://cdn.ldstatic.com",
+        "https://www.v2ex.com",
+        "https://cdn.v2ex.com"
+      ],
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host"
+      }
     }
   },
   "engines": {

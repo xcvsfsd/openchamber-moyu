@@ -32,6 +32,13 @@ root.innerHTML = `
 <style>
 *{box-sizing:border-box}body{margin:0;font:14px/1.6 system-ui,sans-serif}
 #app{display:flex;height:100vh;overflow:hidden}
+body[data-narrow="1"] #app{flex-direction:column}
+body[data-narrow="1"] aside{width:100%;max-width:none;max-height:36%;border-right:none;border-bottom:1px solid var(--oc-border,#8883)}
+body[data-narrow="1"] main{min-height:0}
+body[data-narrow="1"][data-view="thread"] aside{display:none}
+body[data-narrow="1"] #b-back{display:inline-block}
+#b-back{display:none}
+@media (max-width:700px){.msg{max-width:none}}
 aside{width:300px;min-width:240px;border-right:1px solid var(--oc-border,#8883);display:flex;flex-direction:column}
 main{flex:1;display:flex;flex-direction:column;min-width:0}
 .hd{padding:8px 10px;border-bottom:1px solid var(--oc-border,#8883);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
@@ -40,7 +47,10 @@ button{padding:4px 10px;border:1px solid var(--oc-border,#8888);border-radius:8p
 button:disabled{opacity:.5}button.primary{background:var(--primary,#3574f0);border-color:transparent;color:#fff}
 #topics{overflow-y:auto;flex:1}
 .t{padding:8px 10px;border-bottom:1px solid var(--oc-border,#8882);cursor:pointer}
-.t.active{background:var(--oc-hover,#8882)}.t .title{font-weight:600;word-break:break-word}.t .meta{font-size:12px;opacity:.7}
+body[data-narrow="1"] .hd{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+body[data-narrow="1"] .hd::-webkit-scrollbar{display:none}
+.t:hover{background:var(--oc-hover,#8881)}
+.t.active{background:var(--oc-hover,#8882);box-shadow:inset 2px 0 var(--primary,#3574f0)}.t .title{font-weight:600;word-break:break-word}.t .meta{font-size:12px;opacity:.7}
 #thread{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
 .msg{max-width:760px;border:1px solid var(--oc-border,#8883);border-radius:12px;padding:8px 12px}
 .msg.mine{align-self:flex-end;background:var(--oc-hover,#8881)}
@@ -56,6 +66,7 @@ button:disabled{opacity:.5}button.primary{background:var(--primary,#3574f0);bord
 </style>
 <header class="hd" style="width:100%">
   <strong id="cname"></strong>
+  <button id="b-back" title="返回列表">‹</button>
   <select id="ch"></select>
   <button id="b-refresh" title="刷新列表 (r)">↻</button>
   <button id="b-open" title="浏览器打开 (o)">↗</button>
@@ -64,7 +75,7 @@ button:disabled{opacity:.5}button.primary{background:var(--primary,#3574f0);bord
   <button id="b-bell" title="通知">🔔</button>
   <button id="b-login">登录</button>
 </header>
-<div style="display:flex;flex:1;min-height:0;width:100%">
+<div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside><div id="topics"></div></aside>
 <main>
   <div id="msg"></div>
@@ -264,6 +275,7 @@ const pollList = async (force = false): Promise<void> => {
 
 const openTopic = async (t: Topic): Promise<void> => {
   current = t; thread = null; paintList();
+  if (document.body.dataset.narrow === '1') document.body.dataset.view = 'thread';
   draftEl.value = (await storeGet(`moyu:draft:${COMMUNITY}:${t.id}`) as string | undefined) ?? '';
   hintEl.textContent = '匿名阅读；回复需登录（MVP 未接，先存草稿）';
   await openPage(1, true);
@@ -361,5 +373,14 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
+$('b-back').onclick = () => { document.body.dataset.view = 'list'; };
+// 窄面板/窄窗：列表/正文二选一（rail 里不硬挤），宽屏忽略 view
+const fitNarrow = (): void => {
+  const w = document.documentElement.clientWidth;
+  document.body.dataset.narrow = w > 0 && w < 700 ? '1' : '';
+  if (!document.body.dataset.view) document.body.dataset.view = 'list';
+};
+new ResizeObserver(() => fitNarrow()).observe(document.documentElement);
+fitNarrow();
 void loadPrefs().then(() => pollList(true));
 setInterval(() => void pollList(false), 60_000);

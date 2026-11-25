@@ -1,9 +1,13 @@
 # openchamber-moyu
 
-一个 OpenChamber 扩展：在 OpenChamber 里看 linux.do / V2EX（面板内切换社区），界面和 AI 聊天页一样。 port 自 [flyhero/antumi-moyu](https://github.com/flyhero/antumi-moyu)，设计思路照抄 moyu，**不套禅道面板那套**。
+一个 OpenChamber 扩展：V2EX / linux.do / 知乎 / 今日头条 / CSDN / 开源中国 / InfoQ（面板内切换社区），界面和 AI 聊天页一样。 port 自 [flyhero/antumi-moyu](https://github.com/flyhero/antumi-moyu)，设计思路照抄 moyu，**不套禅道面板那套**。
 
 - 话题列表是「会话」，楼主是用户消息，回帖是助手回答——全是假聊天，画在全屏 page 里，不碰真会话。
-- 单包双社区：`extensions/moyu`（侧栏“阅读”），面板内 社区 区切换 linux.do / V2EX，偏好按社区分别记住（默认 V2EX）。
+- 单包七源：`extensions/moyu`（侧栏“阅读”），面板内 社区 区切换，偏好按社区分别记住（默认 V2EX）。
+  - V2EX / linux.do：论坛全文（列表 RSS+API，正文 JSON）
+  - 知乎 / 今日头条 / CSDN / 开源中国：tophub.today 榜单直出（标题+直链+热度），点进正文是原文链接卡
+  - InfoQ 中国：官网首页直出（标题+直链）
+- 榜单每 3 分钟缓存一次，失败不自动重试，限流时按提示等一会儿手动刷（tophub 对高频抓取会 503）。
 - 匿名可读；登录/回复/点赞/通知先占位（service 按 moyu 语气回 need-login），正文链路已通。
 
 ## 安装

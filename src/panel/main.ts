@@ -97,6 +97,9 @@ body[data-narrow="1"] #b-back{display:inline-block}
 #threadbar{display:none;padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);align-items:center;gap:8px}
 body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
 #threadbar .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--oc-muted,#999);font-size:12px}
+/* 老板键（B）：帖子/正文全藏，只留无害的配置区 */
+body[data-boss="1"] #chanrow,body[data-boss="1"] #topics,body[data-boss="1"] aside .sec,body[data-boss="1"] main{display:none!important}
+body[data-boss="1"] aside{width:100%;max-width:none;border-bottom:none;flex:1}
 
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
@@ -126,7 +129,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.7-railonly';
+const BUILD = 'v0.3.8-boss';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -410,6 +413,7 @@ $('b-save').onclick = async () => {
 document.addEventListener('keydown', (e) => {
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
+  if (e.key === 'b' || e.key === 'B') { toggleBoss(); return; }
   if (e.key === 'j' || e.key === 'k') {
     if (!topics.length) return;
     const i = topics.findIndex((t) => t.id === current?.id);
@@ -427,6 +431,14 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
+// 老板键：记住进面板前的工作会话，按 B 瞬间藏帖（只留配置），全屏页顺手切回工作会话，再按 B 恢复
+let lastSession: string | null = null;
+host.onSession((s) => { if (s?.id) lastSession = s.id; });
+const toggleBoss = (): void => {
+  const on = document.body.dataset.boss !== '1';
+  document.body.dataset.boss = on ? '1' : '';
+  if (on && !isNarrow() && lastSession) void host.openSession(lastSession).catch(() => undefined);
+};
 paintThreadPlaceholder();
 $('b-back').onclick = () => { document.body.dataset.view = 'list'; };
 // 窄 rail 只做导航器（main 隐藏），宽页只做阅读器（aside 隐藏）

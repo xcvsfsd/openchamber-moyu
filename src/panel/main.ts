@@ -30,63 +30,91 @@ if (!root) throw new Error('Missing #app');
 
 root.innerHTML = `
 <style>
-*{box-sizing:border-box}body{margin:0;font:14px/1.6 system-ui,sans-serif}
-#app{display:flex;height:100vh;overflow:hidden}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font:14px/1.6 var(--oc-font,system-ui,sans-serif);background:var(--oc-bg,#1b1e22);color:var(--oc-fg,inherit)}
+#app{display:flex;height:100vh;overflow:hidden;background:var(--oc-bg,#1b1e22);color:var(--oc-fg,inherit)}
+/* 左：原生侧栏 */
+aside{width:300px;min-width:250px;max-width:340px;display:flex;flex-direction:column;padding:10px 8px;gap:2px;overflow-y:auto}
+.sec{font-size:12px;color:var(--oc-muted,#999);padding:8px 10px 4px}
+.nrow{display:flex;gap:8px;align-items:baseline;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);cursor:pointer;font:inherit}
+button.nrow:hover{background:var(--oc-hover,#8881)}
+.nrow.active{background:var(--oc-hover,#8882)}
+.nrow .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:13.5px}
+.nrow .mm{font-size:12px;color:var(--oc-muted,#999);white-space:nowrap}
+.nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1}
+.nrow.chan .dot{color:var(--oc-muted,#999)}
+/* 中：原生聊天列 */
+main{flex:1;display:flex;flex-direction:column;min-width:0;border-left:1px solid var(--oc-border,#8883)}
+.hd{padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--oc-bg,#1b1e22)}
+.hd .crumb{font-weight:700}
+button,select,input,textarea{font:inherit}
+.btn{padding:4px 10px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:var(--oc-fg,inherit);cursor:pointer;white-space:nowrap}
+button:disabled{opacity:.5}
+.btn.primary{background:var(--oc-primary,#3574f0);border-color:transparent;color:var(--oc-primary-fg,#fff)}
+#msg:empty{display:none}
+#msg{padding:0 12px}#msg .err{margin-top:8px}
+.err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
+#thread{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;max-width:860px;width:100%;margin:0 auto}
+.msg{display:flex;flex-direction:column;gap:4px;max-width:100%}
+.msg .who{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--oc-muted,#999)}
+.msg .who img{width:22px;height:22px;border-radius:50%;background:var(--oc-muted-surface,#8883)}
+.msg .who .op{font-size:11px;border:1px solid var(--oc-border,#8888);border-radius:999px;padding:0 7px;color:var(--oc-muted,#999)}
+.msg .bubble{border-radius:12px;padding:9px 13px;word-break:break-word;line-height:1.65}
+.msg.mine{align-items:flex-end}
+.msg.mine .bubble{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883)}
+.msg.theirs .bubble{padding:9px 2px}
+.msg .body{word-break:break-word}.msg .body img{max-width:100%;border-radius:8px}
+.msg .body a{color:var(--oc-primary-text,var(--oc-primary,#3574f0))}
+.imgph{border:1px dashed var(--oc-border,#8888);border-radius:8px;padding:8px;font-size:12px;color:var(--oc-muted,#999);cursor:pointer}
+/* 底部：原生 composer */
+#composer{padding:10px 12px 12px;max-width:860px;width:100%;margin:0 auto}
+#composer .box{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+#composer textarea{width:100%;min-height:52px;resize:vertical;border:none;background:transparent;color:inherit;outline:none}
+#composer textarea::placeholder{color:var(--oc-subtle,#777)}
+.mut{font-size:12px;color:var(--oc-muted,#999)}.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sw{font-size:12px;border-radius:999px;padding:4px 10px;border:1px solid var(--oc-border,#8888);background:transparent;color:var(--oc-muted,#999);cursor:pointer;white-space:nowrap}
+.sw.on{border-color:var(--oc-primary,#3574f0);color:var(--oc-primary-text,var(--oc-primary,#3574f0));font-weight:700}
+/* 窄 rail：频道横滑 + 列表/正文切换 */
 body[data-narrow="1"] #app{flex-direction:column}
-body[data-narrow="1"] aside{width:100%;max-width:none;max-height:36%;border-right:none;border-bottom:1px solid var(--oc-border,#8883)}
-body[data-narrow="1"] main{min-height:0}
+body[data-narrow="1"] aside{width:100%;max-width:none;max-height:38%;border-bottom:1px solid var(--oc-border,#8883);padding:6px}
+body[data-narrow="1"] #chanrow{display:flex;overflow-x:auto;scrollbar-width:none}
+body[data-narrow="1"] #chanrow::-webkit-scrollbar{display:none}
+body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
+body[data-narrow="1"] main{border-left:none;min-height:0}
 body[data-narrow="1"][data-view="thread"] aside{display:none}
 body[data-narrow="1"] #b-back{display:inline-block}
 #b-back{display:none}
-@media (max-width:700px){.msg{max-width:none}}
-aside{width:300px;min-width:240px;border-right:1px solid var(--oc-border,#8883);display:flex;flex-direction:column}
-main{flex:1;display:flex;flex-direction:column;min-width:0}
-.hd{padding:8px 10px;border-bottom:1px solid var(--oc-border,#8883);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-select,button,input,textarea{font:inherit}
-button{padding:4px 10px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:var(--oc-fg,inherit);cursor:pointer}
-button:disabled{opacity:.5}button.primary{background:var(--primary,#3574f0);border-color:transparent;color:#fff}
-#topics{overflow-y:auto;flex:1}
-.t{padding:8px 10px;border-bottom:1px solid var(--oc-border,#8882);cursor:pointer}
 body[data-narrow="1"] .hd{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
 body[data-narrow="1"] .hd::-webkit-scrollbar{display:none}
-.t:hover{background:var(--oc-hover,#8881)}
-.t.active{background:var(--oc-hover,#8882);box-shadow:inset 2px 0 var(--primary,#3574f0)}.t .title{font-weight:600;word-break:break-word}.t .meta{font-size:12px;opacity:.7}
-#thread{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
-.msg{max-width:760px;border:1px solid var(--oc-border,#8883);border-radius:12px;padding:8px 12px}
-.msg.mine{align-self:flex-end;background:var(--oc-hover,#8881)}
-.msg .who{font-size:12px;opacity:.7;display:flex;gap:6px;align-items:center}
-.msg .who img{width:20px;height:20px;border-radius:50%}
-.msg .body{word-break:break-word}.msg .body img{max-width:100%;border-radius:8px}
-.imgph{border:1px dashed #8888;border-radius:8px;padding:8px;font-size:12px;opacity:.8;cursor:pointer}
-#composer{border-top:1px solid var(--oc-border,#8883);padding:8px 10px;display:flex;flex-direction:column;gap:6px}
-#composer textarea{width:100%;min-height:56px;resize:vertical;border:1px solid var(--oc-border,#8888);border-radius:8px;padding:8px;background:var(--oc-elevated,inherit);color:inherit}
-.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.mut{font-size:12px;opacity:.7}.err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
-.sw{font-size:12px;border-radius:999px}.sw.on{border-color:var(--primary,#3574f0);color:var(--primary,#3574f0);font-weight:700}
-#msg:empty{display:none}
 </style>
-<header class="hd" style="width:100%">
-  <strong id="cname"></strong>
+<header class="hd">
+  <button class="btn" id="b-back" title="返回列表">‹</button>
+  <span class="crumb" id="cname"></span>
   <span class="mut" id="build"></span>
-  <button id="b-back" title="返回列表">‹</button>
-  <select id="ch"></select>
-  <button id="b-refresh" title="刷新列表 (r)">↻</button>
-  <button id="b-open" title="浏览器打开 (o)">↗</button>
-  <button id="b-cfg" title="代理/连接设置">⚙</button>
+  <span class="mut" id="topic-crumb"></span>
   <span style="flex:1"></span>
-  <button id="b-bell" title="通知">🔔</button>
-  <button id="b-login">登录</button>
+  <button class="btn" id="b-refresh" title="刷新列表 (r)">↻</button>
+  <button class="btn" id="b-open" title="浏览器打开 (o)">↗</button>
+  <button class="btn" id="b-cfg" title="代理/连接设置">⚙</button>
+  <button class="btn" id="b-bell" title="通知">🔔</button>
+  <button class="btn" id="b-login">登录</button>
 </header>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
-<aside><div id="topics"></div></aside>
+<aside>
+  <div class="sec">频道</div><div id="chanrow"><div id="channels"></div></div>
+  <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="topics"></div>
+</aside>
 <main>
   <div id="msg"></div>
-<div id="cfg" style="display:none;border:1px dashed #8888;border-radius:8px;padding:8px;flex-direction:column;gap:6px">
+<div id="cfg" style="display:none;border:1px dashed var(--oc-border,#8888);border-radius:10px;padding:10px 12px;margin:8px 12px 0;flex-direction:column;gap:6px">
   <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填，和系统代理一致，如 http://127.0.0.1:7897）。只存本机，不上传。</div>
-  <div class="row"><input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" style="flex:1" /><button id="b-save" class="primary">保存并测试</button></div>
+  <div class="row"><input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" style="flex:1" /><button class="btn primary" id="b-save">保存并测试</button></div>
   <div class="mut" id="cfg-out"></div>
 </div>
   <div id="thread"></div>
   <div id="composer">
+   <div class="box">
     <div class="row">
       <button id="sw-stream" class="sw" title="流式输出">流式:开</button>
       <button id="sw-img" class="sw" title="图片显示">图片:折叠</button>
@@ -94,21 +122,21 @@ body[data-narrow="1"] .hd::-webkit-scrollbar{display:none}
       <span class="mut" id="pos"></span>
     </div>
     <textarea id="draft" placeholder="回车发送，Ctrl/⌘+回车换行（匿名先存草稿，登录后可发）"></textarea>
-    <div class="row"><button id="b-send" class="primary">发送回复</button><span class="mut" id="hint"></span></div>
+    <div class="row"><button class="btn primary" id="b-send">发送回复</button><span class="mut" id="hint"></span></div>
+   </div>
   </div>
 </main>
 </div>`;
 
 const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${id}`) as T;
-const cname = $('cname'), chSel = $('ch') as unknown as HTMLSelectElement;
+const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 const draftEl = $('draft') as unknown as HTMLTextAreaElement;
 const hintEl = $('hint'), posEl = $('pos');
 
-const BUILD = 'v0.1.2-narrow';
+const BUILD = 'v0.2.0-native';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
-for (const c of INFO.channels) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; chSel.appendChild(o); }
 
 type Prefs = { stream: boolean; images: boolean; mask: boolean };
 let prefs: Prefs = { stream: true, images: false, mask: false };
@@ -172,15 +200,31 @@ $('sw-stream').onclick = () => { prefs.stream = !prefs.stream; savePrefs(); pain
 $('sw-img').onclick = () => { prefs.images = !prefs.images; savePrefs(); paintSwitches(); if (thread) void paintThread(false); };
 $('sw-mask').onclick = () => { prefs.mask = !prefs.mask; savePrefs(); paintSwitches(); paintList(); if (thread) void paintThread(false); };
 
+const paintChannels = (): void => {
+  const box = $('channels');
+  box.innerHTML = '';
+  for (const c of INFO.channels) {
+    const b = document.createElement('button');
+    b.className = 'nrow chan' + (channel === c.id ? ' active' : '');
+    b.innerHTML = `<span class="dot">#</span><span class="tt">${esc(c.name)}</span>`;
+    b.onclick = () => { if (channel !== c.id) { channel = c.id; listAt = 0; paintChannels(); void pollList(true); } };
+    box.appendChild(b);
+  }
+};
+
 const paintList = (): void => {
+  paintChannels();
+  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}` : '';
   topicsEl.innerHTML = '';
   for (const t of topics) {
-    const d = document.createElement('div');
-    d.className = 't' + (current?.id === t.id ? ' active' : '');
-    d.innerHTML = `<div class="title">${esc(t.title)}</div><div class="meta">${esc(t.author)} · ${esc(t.channel ?? '')} · ${t.replies ?? '-'}回复 · ${rel(t.time)}</div>`;
+    const d = document.createElement('button');
+    d.className = 'nrow' + (current?.id === t.id ? ' active' : '');
+    d.innerHTML = `<span class="tt">${esc(t.title)}<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${esc(t.author)}${t.channel ? ` · ${esc(t.channel)}` : ''} · ${t.replies ?? '-'}回复 · ${rel(t.time)}</span></span>`;
     d.onclick = () => void openTopic(t);
     topicsEl.appendChild(d);
   }
+  const crumb = $('topic-crumb');
+  crumb.textContent = current ? `/ ${current.title.slice(0, 24)}` : '';
 };
 
 const clean = (html: string): string =>
@@ -223,20 +267,21 @@ const hydrateImages = async (scope: HTMLElement): Promise<void> => {
   }
 };
 
-const msgCard = (mine: boolean, who: string, avatar: string, time: number | null, html: string, extra = ''): string =>
-  `<div class="msg${mine ? ' mine' : ''}"><div class="who"><img src="${avatar}" alt=""/>${esc(who)} · ${rel(time)}${extra}</div><div class="body">${proxyImg(html)}</div></div>`;
+const msgCard = (mine: boolean, author: string, avatar: string, time: number | null, html: string, tags: string): string =>
+  `<div class="msg${mine ? ' mine' : ''}"><div class="who"><img src="${avatar}" alt="" loading="lazy"/><span>${esc(author)}</span><span>${rel(time)}</span>${tags}</div><div class="bubble"><div class="body">${proxyImg(html)}</div></div></div>`;
 
 const paintThread = async (animate: boolean): Promise<void> => {
   threadEl.innerHTML = '';
   posEl.textContent = '';
   if (!thread) return;
   const cards: string[] = [];
-  if (thread.opening) cards.push(msgCard(true, thread.opening.author, avatarOf(thread.opening.author, thread.opening.avatar), thread.opening.time, thread.opening.html, thread.opening.byAuthor ? ' · 楼主' : ''));
+  if (thread.opening) cards.push(msgCard(true, thread.opening.author, avatarOf(thread.opening.author, thread.opening.avatar), thread.opening.time, thread.opening.html, thread.opening.byAuthor ? '<span class="op">楼主</span>' : ''));
   thread.posts.forEach((p) => {
-    cards.push(msgCard(false, `${p.author}${p.byAuthor ? ' · 楼主' : ''} · #${p.floor}${p.replyTo ? ` 回复 #${p.replyTo}` : ''}${p.likes !== null ? ` · ❤${p.likes}` : ''}`, avatarOf(p.author, p.avatar), p.time, p.html));
+    const tags = `${p.byAuthor ? '<span class="op">楼主</span>' : ''}<span>#${p.floor}</span>${p.replyTo ? `<span>回复 #${p.replyTo}</span>` : ''}${p.likes !== null ? `<span>❤${p.likes}</span>` : ''}`;
+    cards.push(msgCard(false, p.author, avatarOf(p.author, p.avatar), p.time, p.html, tags));
   });
   if (!prefs.stream || !animate) {
-    threadEl.innerHTML = cards.join('') + (thread.more ? `<button id="more">加载更多回复</button>` : '');
+    threadEl.innerHTML = cards.join('') + (thread.more ? `<button class="btn" id="more">加载更多回复</button>` : '');
   } else {
     for (const c of cards) {
       const d = document.createElement('div');
@@ -244,7 +289,7 @@ const paintThread = async (animate: boolean): Promise<void> => {
       threadEl.appendChild(d.firstElementChild!);
       await new Promise((r) => setTimeout(r, 60));
     }
-    if (thread.more) { const b = document.createElement('button'); b.id = 'more'; b.textContent = '加载更多回复'; threadEl.appendChild(b); }
+    if (thread.more) { const b = document.createElement('button'); b.className = 'btn'; b.id = 'more'; b.textContent = '加载更多回复'; threadEl.appendChild(b); }
   }
   const moreBtn = threadEl.querySelector('#more');
   if (moreBtn) (moreBtn as HTMLButtonElement).onclick = () => void openPage(thread!.page + 1, true);
@@ -300,7 +345,6 @@ const openPage = async (page: number, animate: boolean): Promise<void> => {
   }
 };
 
-chSel.onchange = () => { channel = chSel.value; listAt = 0; void pollList(true); };
 $('b-refresh').onclick = () => void pollList(true);
 $('b-open').onclick = () => { if (current) void host.openUrl(current.url); };
 $('b-login').onclick = async () => {

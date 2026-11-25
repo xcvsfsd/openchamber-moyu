@@ -41,6 +41,8 @@ for (const t of targets) {
         page: true,
         // 远程头像/表情直连需要宿主放行（service 代理优先，直连兜底）
         origins: ['https://linux.do', 'https://cdn.ldstatic.com', 'https://www.v2ex.com', 'https://cdn.v2ex.com'],
+        // sessions：在会话中打开话题（左侧原生聊天）
+        capabilities: ['sessions'],
         service: { entry: 'service/main.js', runtime: 'host' },
       },
     },

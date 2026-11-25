@@ -24,6 +24,9 @@
         "https://www.v2ex.com",
         "https://cdn.v2ex.com"
       ],
+      "capabilities": [
+        "sessions"
+      ],
       "service": {
         "entry": "service/main.js",
         "runtime": "host"

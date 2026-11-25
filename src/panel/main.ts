@@ -6,6 +6,20 @@ import DOMPurify from 'dompurify';
 import type { CommunityId, Thread, Topic } from '../shared/types.js';
 import { COMMUNITIES } from '../shared/types.js';
 
+// 全局报错浮层：宿主里出任何异常都写进 #msg，空白页时也能定位
+const bootErrors: string[] = [];
+const showBootErrors = (): void => {
+  const msg = document.querySelector('#msg');
+  if (msg && bootErrors.length > 0) msg.innerHTML = `<div class="err">${bootErrors.map((e) => e).join('<br>')}</div>`;
+};
+window.addEventListener('error', (e) => { bootErrors.push('页面错误：' + String((e as ErrorEvent).message ?? e)); showBootErrors(); });
+window.addEventListener('unhandledrejection', (e) => {
+  const r = (e as PromiseRejectionEvent).reason;
+  const code = (r as { code?: string })?.code;
+  bootErrors.push('未处理异常' + (code ? ` [${code}]` : '') + '：' + String((r as Error)?.message ?? r));
+  showBootErrors();
+});
+
 const COMMUNITY = (document.querySelector('meta[name="moyu-community"]')?.getAttribute('content') === 'v2ex' ? 'v2ex' : 'linuxdo') as CommunityId;
 const INFO = COMMUNITIES.find((c) => c.id === COMMUNITY)!;
 const LIST_TTL = 3 * 60 * 1000;
@@ -226,8 +240,13 @@ const pollList = async (force = false): Promise<void> => {
     topics = j.topics ?? [];
     listAt = Date.now();
     paintList();
-  } catch (e) { say(esc(e instanceof Error ? e.message : '列表失败')); }
-  finally { busy = false; }
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    const hint = code === 'NO_SERVICE' ? '（service 没起来：去 设置→扩展 看阅读卡片上的 service 错误）'
+      : code === 'NOT_GRANTED' ? '（service 能力没批准：重装时勾上）' : '';
+    say(esc(`列表失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}${hint}`));
+    return;
+  } finally { busy = false; }
 };
 
 const openTopic = async (t: Topic): Promise<void> => {
@@ -247,7 +266,10 @@ const openPage = async (page: number, animate: boolean): Promise<void> => {
     if (page === 1 || !thread) thread = j.thread!;
     else thread = { ...j.thread!, posts: [...thread.posts, ...j.thread!.posts] };
     await paintThread(animate);
-  } catch (e) { say(esc(e instanceof Error ? e.message : '正文失败')); }
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    say(esc(`正文失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}`));
+  }
 };
 
 chSel.onchange = () => { channel = chSel.value; listAt = 0; void pollList(true); };

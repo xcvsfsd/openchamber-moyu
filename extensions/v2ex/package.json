@@ -18,6 +18,12 @@
         "entry": "panel/index.html"
       },
       "page": true,
+      "origins": [
+        "https://linux.do",
+        "https://cdn.ldstatic.com",
+        "https://www.v2ex.com",
+        "https://cdn.v2ex.com"
+      ],
       "service": {
         "entry": "service/main.js",
         "runtime": "host"

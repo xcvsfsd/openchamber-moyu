@@ -59,6 +59,7 @@ button:disabled{opacity:.5}button.primary{background:var(--primary,#3574f0);bord
   <select id="ch"></select>
   <button id="b-refresh" title="刷新列表 (r)">↻</button>
   <button id="b-open" title="浏览器打开 (o)">↗</button>
+  <button id="b-cfg" title="代理/连接设置">⚙</button>
   <span style="flex:1"></span>
   <button id="b-bell" title="通知">🔔</button>
   <button id="b-login">登录</button>
@@ -67,6 +68,11 @@ button:disabled{opacity:.5}button.primary{background:var(--primary,#3574f0);bord
 <aside><div id="topics"></div></aside>
 <main>
   <div id="msg"></div>
+<div id="cfg" style="display:none;border:1px dashed #8888;border-radius:8px;padding:8px;flex-direction:column;gap:6px">
+  <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填，和系统代理一致，如 http://127.0.0.1:7897）。只存本机，不上传。</div>
+  <div class="row"><input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" style="flex:1" /><button id="b-save" class="primary">保存并测试</button></div>
+  <div class="mut" id="cfg-out"></div>
+</div>
   <div id="thread"></div>
   <div id="composer">
     <div class="row">
@@ -92,6 +98,7 @@ for (const c of INFO.channels) { const o = document.createElement('option'); o.v
 
 type Prefs = { stream: boolean; images: boolean; mask: boolean };
 let prefs: Prefs = { stream: true, images: false, mask: false };
+let proxy = '';
 let channel = INFO.channels[0]!.id;
 let topics: Topic[] = [];
 let listAt = 0;
@@ -124,12 +131,18 @@ const avatarOf = (name: string, url: string | null): string => {
 const storeGet = async (k: string): Promise<unknown> => { try { return await host.storage.get(k); } catch { return undefined; } };
 const storeSet = async (k: string, v: unknown): Promise<void> => { try { await host.storage.set(k, v as never); } catch { /* 忽略，页内保持 */ } };
 
-const svc = async (method: string, path: string, body?: string): Promise<{ status: number; body: string }> =>
-  host.serviceRequest({ method: method as 'GET' | 'POST', path, body });
+const svc = async (method: string, path: string, body?: string): Promise<{ status: number; body: string }> => {
+  // 代理跟每个请求走（service 读不到宿主 env），?proxy= 与 x-proxy 等价，这里统一拼 query
+  let p = path;
+  if (proxy && method === 'GET' && p.startsWith('/')) p += (p.includes('?') ? '&' : '?') + `proxy=${encodeURIComponent(proxy)}`;
+  return host.serviceRequest({ method: method as 'GET' | 'POST', path: p, body });
+};
 
 const loadPrefs = async (): Promise<void> => {
   const v = await storeGet(`moyu:prefs:${COMMUNITY}`) as Prefs | undefined;
   if (v && typeof v.stream === 'boolean') prefs = v;
+  proxy = (await storeGet('moyu:proxy') as string | undefined) ?? '';
+  (document.querySelector('#cfg-proxy') as HTMLInputElement).value = proxy;
   paintSwitches();
 };
 const savePrefs = (): void => { void storeSet(`moyu:prefs:${COMMUNITY}`, prefs); };
@@ -279,6 +292,21 @@ $('b-login').onclick = async () => {
   if (COMMUNITY === 'linuxdo') await host.openUrl('https://linux.do/login');
   else await host.openUrl('https://www.v2ex.com/signin');
   say('已打开社区登录页：登完点「检查登录」。（MVP：service 暂未接登录态，匿名可读）');
+};
+$('b-cfg').onclick = () => {
+  const c = $('cfg');
+  const open = c.style.display !== 'none';
+  c.style.display = open ? 'none' : 'flex';
+};
+$('b-save').onclick = async () => {
+  const v = (document.querySelector('#cfg-proxy') as HTMLInputElement).value.trim();
+  if (v && !/^https?:\/\/.+/.test(v)) { $('cfg-out').textContent = '格式不对，要 http(s)://host:port'; return; }
+  proxy = v;
+  await storeSet('moyu:proxy', proxy);
+  $('cfg-out').textContent = '已保存，正在测试…';
+  listAt = 0;
+  await pollList(true);
+  $('cfg-out').textContent = topics.length > 0 ? `连通（${topics.length} 条）` : '仍失败，看上方红字（可能是代理地址不对或要认证）';
 };
 $('b-bell').onclick = async () => {
   try {

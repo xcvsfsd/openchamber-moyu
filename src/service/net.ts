@@ -6,7 +6,7 @@ import type { Socket } from 'node:net';
 import { connect as connectTcp } from 'node:net';
 import { connect as connectTls } from 'node:tls';
 
-export type HttpResponse = { status: number; headers: Record<string, string>; body: string };
+export type HttpResponse = { status: number; headers: Record<string, string>; body: Buffer };
 
 const TIMEOUT_MS = 15_000;
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -116,12 +116,14 @@ const plainHeaders = (headers: IncomingHttpHeaders): Record<string, string> => {
   return out;
 };
 
-export const h2get = async (url: string, signal: AbortSignal, timeoutMs = TIMEOUT_MS): Promise<HttpResponse> => {
+export type H2Options = { timeoutMs?: number; proxy?: string | null; maxBytes?: number };
+export const h2get = async (url: string, signal: AbortSignal, options: H2Options = {}): Promise<HttpResponse> => {
   const target = new URL(url);
-  const stop = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+  const stop = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS)]);
   const abortError = (): Error => new Error(signal.aborted ? '已取消' : '超时');
   if (stop.aborted) throw abortError();
-  const proxy = proxyFor(target);
+  const proxy = options.proxy === undefined ? proxyFor(target) : options.proxy;
+  const maxBytes = options.maxBytes ?? MAX_BYTES;
   let carrier: Socket | undefined;
   if (proxy) {
     try {
@@ -153,14 +155,14 @@ export const h2get = async (url: string, signal: AbortSignal, timeoutMs = TIMEOU
     stream.on('response', (received) => {
       status = Number(received[':status']);
       headers = plainHeaders(received);
-      if (Number(headers['content-length']) > MAX_BYTES) end(new Error('响应太大'));
+      if (Number(headers['content-length']) > maxBytes) end(new Error('响应太大'));
     });
     stream.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_BYTES) end(new Error('响应太大'));
+      if (size > maxBytes) end(new Error('响应太大'));
       else chunks.push(chunk);
     });
-    stream.on('end', () => end(null, { status, headers, body: Buffer.concat(chunks).toString('utf8') }));
+    stream.on('end', () => end(null, { status, headers, body: Buffer.concat(chunks) }));
     stream.on('error', () => end(new Error('网络错误')));
     stream.on('close', () => end(new Error('网络错误')));
   });

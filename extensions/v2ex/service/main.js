@@ -200,13 +200,14 @@ var plainHeaders = (headers) => {
   }
   return out;
 };
-var h2get = async (url, signal, timeoutMs = TIMEOUT_MS) => {
+var h2get = async (url, signal, options = {}) => {
   const target = new URL(url);
-  const stop = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+  const stop = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS)]);
   const abortError = () => new Error(signal.aborted ? "已取消" : "超时");
   if (stop.aborted)
     throw abortError();
-  const proxy = proxyFor(target);
+  const proxy = options.proxy === undefined ? proxyFor(target) : options.proxy;
+  const maxBytes = options.maxBytes ?? MAX_BYTES;
   let carrier;
   if (proxy) {
     try {
@@ -247,17 +248,17 @@ var h2get = async (url, signal, timeoutMs = TIMEOUT_MS) => {
     stream.on("response", (received) => {
       status = Number(received[":status"]);
       headers = plainHeaders(received);
-      if (Number(headers["content-length"]) > MAX_BYTES)
+      if (Number(headers["content-length"]) > maxBytes)
         end(new Error("响应太大"));
     });
     stream.on("data", (chunk) => {
       size += chunk.length;
-      if (size > MAX_BYTES)
+      if (size > maxBytes)
         end(new Error("响应太大"));
       else
         chunks.push(chunk);
     });
-    stream.on("end", () => end(null, { status, headers, body: Buffer.concat(chunks).toString("utf8") }));
+    stream.on("end", () => end(null, { status, headers, body: Buffer.concat(chunks) }));
     stream.on("error", () => end(new Error("网络错误")));
     stream.on("close", () => end(new Error("网络错误")));
   });
@@ -280,20 +281,26 @@ var pace = async () => {
     await new Promise((r) => setTimeout(r, gap));
   lastStart = Date.now();
 };
-var timedFetch = async (url, _init) => {
+var timedFetch = async (url, proxy) => {
   await pace();
   const ctrl = new AbortController;
-  const h = await h2get(url, ctrl.signal, FETCH_TIMEOUT_MS);
+  const h = await h2get(url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
   const headers = new Headers(h.headers);
-  const body = h.body;
+  const body = h.body.toString("utf8");
   return {
     status: h.status,
     ok: h.status >= 200 && h.status < 300,
     headers: { get: (n) => headers.get(n) },
     text: async () => body,
-    json: async () => JSON.parse(body),
-    arrayBuffer: async () => new TextEncoder().encode(body).buffer
+    json: async () => JSON.parse(body)
   };
+};
+var netError = (e) => {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg === "网络错误" || msg === "超时" || msg === "连不上代理" || msg === "代理拒绝了连接（407）" || msg.startsWith("代理")) {
+    return new Error(`${msg}（直连不出公网时，点面板右上⚙填 HTTP 代理，和系统代理一致）`);
+  }
+  return e instanceof Error ? e : new Error(msg);
 };
 var abs = (maybe, origin) => {
   if (!maybe)
@@ -328,11 +335,11 @@ var LD_PATHS = {
   news: "/c/news/34.rss"
 };
 var cdnFix = (s) => s.replace(/https:\/\/linux\.do\/(?=(?:user_avatar|letter_avatar|images\/emoji)\/)/g, "https://cdn.ldstatic.com/");
-var linuxdoList = async (channel) => {
+var linuxdoList = async (channel, proxy) => {
   const path = LD_PATHS[channel];
   if (!path)
     throw new Error(`linux.do 没有这个板块：${channel}`);
-  const r = await timedFetch(LD + path);
+  const r = await timedFetch(LD + path, proxy);
   if (r.status === 403)
     throw new Error("linux.do 暂时拦住了请求（403），过一会儿再试");
   if (r.status !== 200)
@@ -360,11 +367,11 @@ var linuxdoList = async (channel) => {
   }
   return out.slice(0, 100);
 };
-var linuxdoThread = async (id, page) => {
+var linuxdoThread = async (id, page, proxy) => {
   if (!/^\d{1,12}$/.test(id))
     throw new Error("请求的参数不对（id）");
   const q = page > 1 ? `?page=${page}` : "";
-  const r = await timedFetch(`${LD}/t/topic/${id}.json${q}`);
+  const r = await timedFetch(`${LD}/t/topic/${id}.json${q}`, proxy);
   if (r.status === 404)
     throw new Error("帖子不存在，或者需要登录才能看");
   if (r.status === 403)
@@ -412,8 +419,8 @@ var linuxdoThread = async (id, page) => {
   };
 };
 var V2 = "https://www.v2ex.com";
-var v2checked = async (url, missing) => {
-  const r = await timedFetch(url);
+var v2checked = async (url, proxy, missing) => {
+  const r = await timedFetch(url, proxy);
   if (r.status === 403 || r.status === 429) {
     const reset = Number(r.headers.get("x-rate-limit-reset"));
     if (Number.isFinite(reset) && reset > 0) {
@@ -432,11 +439,11 @@ var v2checked = async (url, missing) => {
     throw new Error("V2EX 返回的内容读不懂");
   }
 };
-var v2exList = async (channel) => {
+var v2exList = async (channel, proxy) => {
   const path = channel === "hot" ? "/api/topics/hot.json" : channel === "latest" ? "/api/topics/latest.json" : ["programmer", "share", "create", "qna", "jobs"].includes(channel) ? `/api/topics/show.json?node_name=${channel}` : null;
   if (!path)
     throw new Error(`V2EX 没有这个板块：${channel}`);
-  const data = await v2checked(V2 + path);
+  const data = await v2checked(V2 + path, proxy);
   if (!Array.isArray(data))
     throw new Error("V2EX 返回的内容读不懂");
   return data.filter((t) => typeof t.id === "number" && typeof t.title === "string").map((t) => ({
@@ -451,10 +458,10 @@ var v2exList = async (channel) => {
     url: t.url || `${V2}/t/${t.id}`
   })).slice(0, 100);
 };
-var v2exThread = async (id, page) => {
+var v2exThread = async (id, page, proxy) => {
   if (!/^\d{1,12}$/.test(id))
     throw new Error("请求的参数不对（id）");
-  const shown = await v2checked(`${V2}/api/topics/show.json?id=${id}`, "帖子不存在");
+  const shown = await v2checked(`${V2}/api/topics/show.json?id=${id}`, proxy, "帖子不存在");
   if (!Array.isArray(shown) || shown.length === 0)
     throw new Error("帖子不存在");
   const raw = shown[0];
@@ -481,7 +488,7 @@ var v2exThread = async (id, page) => {
     likes: null,
     byAuthor: true
   };
-  const replies = await v2checked(`${V2}/api/replies/show.json?topic_id=${id}`);
+  const replies = await v2checked(`${V2}/api/replies/show.json?topic_id=${id}`, proxy);
   const posts = (Array.isArray(replies) ? replies : []).map((rp, i) => ({
     floor: i + 1,
     author: rp.member?.username ?? "",
@@ -495,14 +502,22 @@ var v2exThread = async (id, page) => {
   return { topic, opening, posts, page, more: false };
 };
 var listCache = new Map;
-var cachedList = async (community, channel) => {
-  const key = `${community}/${channel}`;
+var cachedList = async (community, channel, proxy) => {
+  const key = `${community}/${channel}/${proxy ?? ""}`;
   const hit = listCache.get(key);
   if (hit && Date.now() - hit.at < LIST_CACHE_TTL_MS)
     return { topics: hit.topics, cached: true };
-  const topics = community === "linuxdo" ? await linuxdoList(channel) : await v2exList(channel);
+  const topics = community === "linuxdo" ? await linuxdoList(channel, proxy) : await v2exList(channel, proxy);
   listCache.set(key, { at: Date.now(), topics });
   return { topics, cached: false };
+};
+var proxyOf = (req, url) => {
+  const header = req.headers["x-proxy"];
+  const q = url.searchParams.get("proxy");
+  const v = (Array.isArray(header) ? header[0] : header ?? q)?.trim();
+  if (v)
+    return v;
+  return;
 };
 var json = (res, status, body) => {
   res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -538,14 +553,16 @@ var server = http.createServer((req, res) => {
     const channel = url.searchParams.get("channel") ?? "";
     if (community !== "linuxdo" && community !== "v2ex")
       return json(res, 400, { ok: false, error: "bad-community" });
-    cachedList(community, channel).then(({ topics, cached }) => json(res, 200, { ok: true, topics, cached }), (e) => json(res, 200, { ok: false, error: e instanceof Error ? e.message : "list-failed" }));
+    const px = proxyOf(req, url) ?? undefined;
+    cachedList(community, channel, px).then(({ topics, cached }) => json(res, 200, { ok: true, topics, cached }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
     return;
   }
   if (req.method === "GET" && url.pathname === "/thread") {
     const community = url.searchParams.get("community");
     const id = url.searchParams.get("id") ?? "";
     const page = Math.max(1, Number(url.searchParams.get("page") ?? "1") || 1);
-    (async () => community === "linuxdo" ? linuxdoThread(id, page) : v2exThread(id, page))().then((thread) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: e instanceof Error ? e.message : "thread-failed" }));
+    const px = proxyOf(req, url) ?? undefined;
+    (async () => community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px))().then((thread) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
     return;
   }
   if (req.method === "GET" && url.pathname === "/image") {
@@ -559,27 +576,21 @@ var server = http.createServer((req, res) => {
     const allowed = /^(linux\.do|cdn\.ldstatic\.com|.*\.v2ex\.com|v2ex\.com)$/.test(u.hostname);
     if (u.protocol !== "https:" || !allowed)
       return json(res, 400, { ok: false, error: "bad-host" });
-    timedFetch(u.toString()).then(async (r) => {
-      if (!r.ok)
-        return json(res, 200, { ok: false, error: `图片取回 ${r.status}` });
-      const ct = r.headers.get("content-type") ?? "image/*";
-      if (!ct.startsWith("image/"))
-        return json(res, 200, { ok: false, error: "not-image" });
-      const ctrl2 = new AbortController;
-      const t2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT_MS);
+    (async () => {
+      await pace();
+      const ctrl = new AbortController;
+      const px = proxyOf(req, url) ?? undefined;
       try {
-        const br = await fetch(u.toString(), { signal: ctrl2.signal });
-        const buf = Buffer.from(await br.arrayBuffer());
-        if (buf.length > 4 * 1024 * 1024)
-          return json(res, 200, { ok: false, error: "图片太大" });
+        const h = await h2get(u.toString(), ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy: px, maxBytes: 4 * 1024 * 1024 });
+        const ct = h.headers["content-type"] ?? "image/*";
+        if (!ct.startsWith("image/"))
+          return json(res, 200, { ok: false, error: "not-image" });
         res.writeHead(200, { "Content-Type": ct, "Cache-Control": "public, max-age=3600" });
-        res.end(buf);
-      } catch {
-        json(res, 200, { ok: false, error: "image-failed" });
-      } finally {
-        clearTimeout(t2);
+        res.end(h.body);
+      } catch (e) {
+        json(res, 200, { ok: false, error: netError(e).message });
       }
-    }, () => json(res, 200, { ok: false, error: "image-failed" }));
+    })();
     return;
   }
   if (req.method === "POST" && ["/session", "/reply", "/like", "/upload", "/notifications"].includes(url.pathname)) {

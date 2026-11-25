@@ -23,17 +23,24 @@ const pace = async (): Promise<void> => {
 };
 
 import { h2get } from './net.js';
-const timedFetch = async (url: string, _init?: RequestInit): Promise<{ status: number; headers: { get(n: string): string | null }; text(): Promise<string>; json(): Promise<unknown>; ok: boolean; arrayBuffer(): Promise<ArrayBuffer> }> => {
+type FetchLike = { status: number; headers: { get(n: string): string | null }; text(): Promise<string>; json(): Promise<unknown>; ok: boolean };
+const timedFetch = async (url: string, proxy?: string | null): Promise<FetchLike> => {
   await pace();
   const ctrl = new AbortController();
-  const h = await h2get(url, ctrl.signal, FETCH_TIMEOUT_MS);
+  const h = await h2get(url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
   const headers = new Headers(h.headers as Record<string, string>);
-  const body = h.body;
+  const body = h.body.toString('utf8');
   return {
     status: h.status, ok: h.status >= 200 && h.status < 300, headers: { get: (n: string) => headers.get(n) },
     text: async () => body, json: async () => JSON.parse(body),
-    arrayBuffer: async () => new TextEncoder().encode(body).buffer as ArrayBuffer,
   };
+};
+const netError = (e: unknown): Error => {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg === '网络错误' || msg === '超时' || msg === '连不上代理' || msg === '代理拒绝了连接（407）' || msg.startsWith('代理')) {
+    return new Error(`${msg}（直连不出公网时，点面板右上⚙填 HTTP 代理，和系统代理一致）`);
+  }
+  return e instanceof Error ? e : new Error(msg);
 };
 
 const abs = (maybe: string | null | undefined, origin: string): string | null => {
@@ -59,10 +66,10 @@ const LD_PATHS: Record<string, string> = {
 };
 const cdnFix = (s: string): string => s.replace(/https:\/\/linux\.do\/(?=(?:user_avatar|letter_avatar|images\/emoji)\/)/g, 'https://cdn.ldstatic.com/');
 
-const linuxdoList = async (channel: string): Promise<Topic[]> => {
+const linuxdoList = async (channel: string, proxy?: string | null): Promise<Topic[]> => {
   const path = LD_PATHS[channel];
   if (!path) throw new Error(`linux.do 没有这个板块：${channel}`);
-  const r = await timedFetch(LD + path);
+  const r = await timedFetch(LD + path, proxy);
   if (r.status === 403) throw new Error('linux.do 暂时拦住了请求（403），过一会儿再试');
   if (r.status !== 200) throw new Error(`linux.do 返回了 ${r.status}`);
   const body = await r.text();
@@ -82,10 +89,10 @@ const linuxdoList = async (channel: string): Promise<Topic[]> => {
   return out.slice(0, 100);
 };
 
-const linuxdoThread = async (id: string, page: number): Promise<Thread> => {
+const linuxdoThread = async (id: string, page: number, proxy?: string | null): Promise<Thread> => {
   if (!/^\d{1,12}$/.test(id)) throw new Error('请求的参数不对（id）');
   const q = page > 1 ? `?page=${page}` : '';
-  const r = await timedFetch(`${LD}/t/topic/${id}.json${q}`);
+  const r = await timedFetch(`${LD}/t/topic/${id}.json${q}`, proxy);
   if (r.status === 404) throw new Error('帖子不存在，或者需要登录才能看');
   if (r.status === 403) throw new Error('linux.do 暂时拦住了请求（403），出现验证时去浏览器完成验证再试');
   if (r.status !== 200) throw new Error(`linux.do 返回了 ${r.status}`);
@@ -127,8 +134,8 @@ const linuxdoThread = async (id: string, page: number): Promise<Thread> => {
 
 // ---- V2EX ----
 const V2 = 'https://www.v2ex.com';
-const v2checked = async (url: string, missing?: string): Promise<unknown> => {
-  const r = await timedFetch(url);
+const v2checked = async (url: string, proxy?: string | null, missing?: string): Promise<unknown> => {
+  const r = await timedFetch(url, proxy);
   if (r.status === 403 || r.status === 429) {
     const reset = Number(r.headers.get('x-rate-limit-reset'));
     if (Number.isFinite(reset) && reset > 0) {
@@ -142,12 +149,12 @@ const v2checked = async (url: string, missing?: string): Promise<unknown> => {
   try { return await r.json(); } catch { throw new Error('V2EX 返回的内容读不懂'); }
 };
 
-const v2exList = async (channel: string): Promise<Topic[]> => {
+const v2exList = async (channel: string, proxy?: string | null): Promise<Topic[]> => {
   const path = channel === 'hot' ? '/api/topics/hot.json'
     : channel === 'latest' ? '/api/topics/latest.json'
     : ['programmer', 'share', 'create', 'qna', 'jobs'].includes(channel) ? `/api/topics/show.json?node_name=${channel}` : null;
   if (!path) throw new Error(`V2EX 没有这个板块：${channel}`);
-  const data = await v2checked(V2 + path);
+  const data = await v2checked(V2 + path, proxy);
   if (!Array.isArray(data)) throw new Error('V2EX 返回的内容读不懂');
   return (data as Array<{ id: number; title: string; url?: string; replies?: number; created?: number; last_touched?: number; member?: { username: string; avatar_large?: string; avatar_normal?: string }; node?: { title: string }; }>)
     .filter((t) => typeof t.id === 'number' && typeof t.title === 'string')
@@ -160,9 +167,9 @@ const v2exList = async (channel: string): Promise<Topic[]> => {
     })).slice(0, 100);
 };
 
-const v2exThread = async (id: string, page: number): Promise<Thread> => {
+const v2exThread = async (id: string, page: number, proxy?: string | null): Promise<Thread> => {
   if (!/^\d{1,12}$/.test(id)) throw new Error('请求的参数不对（id）');
-  const shown = await v2checked(`${V2}/api/topics/show.json?id=${id}`, '帖子不存在') as Array<{
+  const shown = await v2checked(`${V2}/api/topics/show.json?id=${id}`, proxy, '帖子不存在') as Array<{
     id: number; title: string; member?: { username: string; avatar_large?: string }; node?: { title: string };
     replies?: number; created?: number; content_rendered?: string;
   }>;
@@ -179,7 +186,7 @@ const v2exThread = async (id: string, page: number): Promise<Thread> => {
     floor: 0, author: topic.author, avatar: topic.avatar,
     html: absLinks(raw.content_rendered ?? '', V2), time: topic.time, replyTo: null, likes: null, byAuthor: true,
   };
-  const replies = await v2checked(`${V2}/api/replies/show.json?topic_id=${id}`) as Array<{
+  const replies = await v2checked(`${V2}/api/replies/show.json?topic_id=${id}`, proxy) as Array<{
     member?: { username: string; avatar_large?: string }; content_rendered?: string; created?: number;
   }>;
   const posts: Post[] = (Array.isArray(replies) ? replies : []).map((rp, i) => ({
@@ -193,13 +200,22 @@ const v2exThread = async (id: string, page: number): Promise<Thread> => {
 
 // ---- 缓存（列表 3 分钟，到期页面可见时再刷） ----
 const listCache = new Map<string, { at: number; topics: Topic[] }>();
-const cachedList = async (community: CommunityId, channel: string): Promise<{ topics: Topic[]; cached: boolean }> => {
-  const key = `${community}/${channel}`;
+const cachedList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<{ topics: Topic[]; cached: boolean }> => {
+  const key = `${community}/${channel}/${proxy ?? ''}`;
   const hit = listCache.get(key);
   if (hit && Date.now() - hit.at < LIST_CACHE_TTL_MS) return { topics: hit.topics, cached: true };
-  const topics = community === 'linuxdo' ? await linuxdoList(channel) : await v2exList(channel);
+  const topics = community === 'linuxdo' ? await linuxdoList(channel, proxy) : await v2exList(channel, proxy);
   listCache.set(key, { at: Date.now(), topics });
   return { topics, cached: false };
+};
+
+const proxyOf = (req: http.IncomingMessage, url: URL): string | null | undefined => {
+  // 面板⚙里配的优先（x-proxy 头或 ?proxy=）；都没有则沿用 service 自己的 env（宿主下为空=直连）
+  const header = req.headers['x-proxy'];
+  const q = url.searchParams.get('proxy');
+  const v = (Array.isArray(header) ? header[0] : header ?? q)?.trim();
+  if (v) return v;
+  return undefined; // undefined = h2get 按 env 决定；显式 '' = 直连
 };
 
 const json = (res: http.ServerResponse, status: number, body: unknown): void => {
@@ -226,9 +242,10 @@ const server = http.createServer((req, res) => {
     const community = url.searchParams.get('community') as CommunityId;
     const channel = url.searchParams.get('channel') ?? '';
     if (community !== 'linuxdo' && community !== 'v2ex') return json(res, 400, { ok: false, error: 'bad-community' });
-    cachedList(community, channel).then(
+    const px = proxyOf(req, url) ?? undefined;
+    cachedList(community, channel, px).then(
       ({ topics, cached }) => json(res, 200, { ok: true, topics, cached }),
-      (e) => json(res, 200, { ok: false, error: e instanceof Error ? e.message : 'list-failed' }),
+      (e) => json(res, 200, { ok: false, error: netError(e).message }),
     );
     return;
   }
@@ -236,35 +253,33 @@ const server = http.createServer((req, res) => {
     const community = url.searchParams.get('community') as CommunityId;
     const id = url.searchParams.get('id') ?? '';
     const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
-    (async () => community === 'linuxdo' ? linuxdoThread(id, page) : v2exThread(id, page))().then(
+    const px = proxyOf(req, url) ?? undefined;
+    (async () => community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px))().then(
       (thread) => json(res, 200, { ok: true, thread }),
-      (e) => json(res, 200, { ok: false, error: e instanceof Error ? e.message : 'thread-failed' }),
+      (e) => json(res, 200, { ok: false, error: netError(e).message }),
     );
     return;
   }
   // 图片代理：页面不直连论坛，点开才加载；论坛看到的是 service 的 IP（和用浏览器看帖一样）。
+  // 二进制走 h2get（原生 fetch 读不到宿主的代理），论坛 JSON/RSS 同走 HTTP/2。
   if (req.method === 'GET' && url.pathname === '/image') {
     const src = url.searchParams.get('url') ?? '';
     let u: URL;
     try { u = new URL(src); } catch { return json(res, 400, { ok: false, error: 'bad-url' }); }
     const allowed = /^(linux\.do|cdn\.ldstatic\.com|.*\.v2ex\.com|v2ex\.com)$/.test(u.hostname);
     if (u.protocol !== 'https:' || !allowed) return json(res, 400, { ok: false, error: 'bad-host' });
-    timedFetch(u.toString()).then(async (r) => {
-      if (!r.ok) return json(res, 200, { ok: false, error: `图片取回 ${r.status}` });
-      const ct = (r.headers.get('content-type') as string | null) ?? 'image/*';
-      if (!ct.startsWith('image/')) return json(res, 200, { ok: false, error: 'not-image' });
-      // h2get 只收文本，图片走原生 fetch 取二进制
-      const ctrl2 = new AbortController();
-      const t2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT_MS);
+    (async () => {
+      await pace();
+      const ctrl = new AbortController();
+      const px = proxyOf(req, url) ?? undefined;
       try {
-        const br = await fetch(u.toString(), { signal: ctrl2.signal });
-        const buf = Buffer.from(await br.arrayBuffer());
-        if (buf.length > 4 * 1024 * 1024) return json(res, 200, { ok: false, error: '图片太大' });
+        const h = await h2get(u.toString(), ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy: px, maxBytes: 4 * 1024 * 1024 });
+        const ct = h.headers['content-type'] ?? 'image/*';
+        if (!ct.startsWith('image/')) return json(res, 200, { ok: false, error: 'not-image' });
         res.writeHead(200, { 'Content-Type': ct, 'Cache-Control': 'public, max-age=3600' });
-        res.end(buf);
-      } catch { json(res, 200, { ok: false, error: 'image-failed' }); }
-      finally { clearTimeout(t2); }
-    }, () => json(res, 200, { ok: false, error: 'image-failed' }));
+        res.end(h.body);
+      } catch (e) { json(res, 200, { ok: false, error: netError(e).message }); }
+    })();
     return;
   }
   // 写操作 MVP：匿名不可写，按 moyu 语气返回，由页面提示登录

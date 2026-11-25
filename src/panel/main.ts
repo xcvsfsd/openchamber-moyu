@@ -79,7 +79,7 @@ button:disabled{opacity:.5}
 .msg .body th,.msg .body td{border:1px solid var(--oc-border,#8883);padding:5px 10px;text-align:left}
 .msg .body th{background:var(--oc-hover,#8881)}
 .msg .body img{max-width:100%;border-radius:8px}
-.msg .body a{color:var(--oc-primary-text,var(--oc-primary,#3574f0))}
+.msg .body a{color:inherit}
 .msg .body h1,.msg .body h2,.msg .body h3{font-size:1.05em;margin:12px 0 6px}
 .imgph{border:1px dashed var(--oc-border,#8888);border-radius:8px;padding:8px;font-size:12px;color:var(--oc-muted,#999);cursor:pointer}
 .mut{font-size:12px;color:var(--oc-muted,#999)}.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
@@ -116,7 +116,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.4-meta11';
+const BUILD = 'v0.3.5-nolink';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 

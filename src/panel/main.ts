@@ -97,6 +97,7 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
 #threadbar{display:none;padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);align-items:center;gap:8px}
 body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
 #threadbar .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--oc-muted,#999);font-size:12px}
+#thread[data-hot="1"] .msg.mine .bubble{cursor:pointer}
 
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
@@ -127,7 +128,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.5.4-full';
+const BUILD = 'v0.5.5-hotcard';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -310,16 +311,21 @@ const msgCard = (mine: boolean, author: string, time: number | null, html: strin
     : `<div class="msg theirs"><div class="bubble"><div class="body">${proxyImg(html)}</div></div><div class="meta">${[esc(author), rel(time), ...tags].filter(Boolean).join('<span class="sep">·</span>')}</div></div>`;
 
 // 帖内链接走宿主浏览器打开（sandbox 里点不开，统一经 openUrl）
+// 热榜原文卡：整块 bubble 可点，直接跳原文（不用精确点中链接文字）
+const HOT: readonly string[] = ['zhihu', 'toutiao', 'csdn', 'oschina', 'infoq'];
 threadEl.addEventListener('click', (e) => {
   const a = (e.target as HTMLElement).closest?.('a') as HTMLAnchorElement | null;
-  if (!a?.href) return;
-  e.preventDefault();
-  void host.openUrl(a.href);
+  if (a?.href) { e.preventDefault(); void host.openUrl(a.href); return; }
+  if (thread && (HOT as readonly string[]).includes(thread.topic.community)) {
+    if ((e.target as HTMLElement).closest?.('.msg.mine')) void host.openUrl(thread.topic.url);
+  }
 });
 
 const paintThread = async (animate: boolean): Promise<void> => {
   threadEl.innerHTML = '';
+  threadEl.dataset.hot = '';
   if (!thread) { paintThreadPlaceholder(); return; }
+  threadEl.dataset.hot = (HOT as readonly string[]).includes(thread.topic.community) ? '1' : '';
   // 原生“活动行”：帖子上下文（作者·频道·回复数·时间）
   const t = thread.topic;
   const actParts: string[] = [];

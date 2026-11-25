@@ -3,7 +3,7 @@
 一个 OpenChamber 扩展：V2EX / linux.do / 知乎 / 今日头条 / CSDN / 开源中国 / InfoQ（面板内切换社区），界面和 AI 聊天页一样。 port 自 [flyhero/antumi-moyu](https://github.com/flyhero/antumi-moyu)，设计思路照抄 moyu，**不套禅道面板那套**。
 
 - 话题列表是「会话」，楼主是用户消息，回帖是助手回答——全是假聊天，画在全屏 page 里，不碰真会话。
-- 单包七源：`extensions/moyu`（侧栏“阅读”），面板内 社区 区切换，偏好按社区分别记住（默认 V2EX）。
+- 单包七源：本目录即扩展（rail 图标“阅读”），面板内 社区 区切换，偏好按社区分别记住（默认 V2EX）。
   - V2EX / linux.do：论坛全文（列表 RSS+API，正文 JSON）
   - 知乎 / 今日头条 / CSDN / 开源中国：tophub.today 榜单直出（标题+直链+热度），点进正文是原文链接卡
   - InfoQ 中国：官网首页直出（标题+直链）
@@ -15,7 +15,7 @@
 OpenChamber → 设置 → 扩展 → 粘贴本地路径安装（改完 `bun run build` 即生效）：
 
 ```text
-/home/liaoz/code/openchamber-moyu/extensions/moyu
+/home/liaoz/code/openchamber-moyu
 ```
 
 批准 `service` 能力，点 rail 图标或 Extension pages 进全屏。

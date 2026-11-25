@@ -37,10 +37,10 @@ body{margin:0;font:14px/1.6 var(--oc-font,system-ui,sans-serif);background:var(-
 /* 左：原生侧栏 */
 aside{width:300px;min-width:250px;max-width:340px;display:flex;flex-direction:column;padding:10px 8px;gap:2px;overflow-y:auto}
 .sec{font-size:12px;color:var(--oc-muted,#999);padding:8px 10px 4px}
-.nrow{display:flex;gap:8px;align-items:baseline;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);cursor:pointer;font:inherit}
+.nrow{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);cursor:pointer;font:inherit}
 button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.active{background:var(--oc-hover,#8882)}
-.nrow .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:13.5px}
+.nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere}
 .nrow .mm{font-size:12px;color:var(--oc-muted,#999);white-space:nowrap}
 .nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1}
 .nrow.chan .dot{color:var(--oc-muted,#999)}
@@ -127,7 +127,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.5.3-norush';
+const BUILD = 'v0.5.4-full';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 

@@ -116,7 +116,7 @@ body[data-boss="1"] aside{width:100%;max-width:none;border-bottom:none;flex:1}
     <button class="btn primary" id="b-save">保存并测试</button>
     <div class="mut" id="cfg-out"></div>
   </div>
-  <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
+  <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span><br>B 藏/显 · R 刷新 · O 打开 · J/K 翻页</div>
 </aside>
 <main>
   <div id="threadbar"><button class="btn" id="b-back" title="返回列表">‹</button><span class="tt" id="topic-crumb"></span></div>
@@ -129,7 +129,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.9-altq';
+const BUILD = 'v0.3.10-bosshint';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -451,7 +451,8 @@ const fitNarrow = (): void => {
   document.body.dataset.narrow = w > 0 && w < 700 ? '1' : '';
   if (!document.body.dataset.view) document.body.dataset.view = 'list';
 };
-new ResizeObserver(() => fitNarrow()).observe(document.documentElement);
+if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => fitNarrow()).observe(document.documentElement);
+else window.addEventListener('resize', () => fitNarrow());
 fitNarrow();
 void loadPrefs().then(() => { paintChannels(); void pollList(true); });
 setInterval(() => void pollList(false), 60_000);

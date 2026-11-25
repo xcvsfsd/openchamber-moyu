@@ -56,18 +56,28 @@ button:disabled{opacity:.5}
 #msg:empty{display:none}
 #msg{padding:0 12px}#msg .err{margin-top:8px}
 .err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
-#thread{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;max-width:860px;width:100%;margin:0 auto}
-.msg{display:flex;flex-direction:column;gap:4px;max-width:100%}
-.msg .who{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--oc-muted,#999)}
-.msg .who img{width:22px;height:22px;border-radius:50%;background:var(--oc-muted-surface,#8883)}
-.msg .who .op{font-size:11px;border:1px solid var(--oc-border,#8888);border-radius:999px;padding:0 7px;color:var(--oc-muted,#999)}
-.msg .bubble{border-radius:12px;padding:9px 13px;word-break:break-word;line-height:1.65}
+#thread{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:18px;max-width:900px;width:100%;margin:0 auto}
+.msg{display:flex;flex-direction:column;gap:2px;max-width:100%}
+.msg .bubble{border-radius:12px;padding:9px 14px;word-break:break-word;line-height:1.7;font-size:14px}
 .msg.mine{align-items:flex-end}
-.msg.mine .who{display:none}
-.msg.mine .bubble{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);max-width:78%}
-.msg.theirs .bubble{padding:9px 2px}
-.msg .body{word-break:break-word}.msg .body img{max-width:100%;border-radius:8px}
+.msg.mine .bubble{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);max-width:70%}
+.msg.theirs .bubble{padding:2px;max-width:100%}
+.msg .meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--oc-muted,#999);margin-top:5px}
+.msg .meta .op{font-size:11px;border:1px solid var(--oc-border,#8888);border-radius:999px;padding:0 7px}
+.msg .body{word-break:break-word;line-height:1.7;font-size:14px}
+.msg .body p{margin:0 0 10px}.msg .body p:last-child{margin-bottom:0}
+.msg .body pre{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);border-radius:10px;padding:10px 12px;overflow-x:auto;font-family:var(--oc-mono,monospace);font-size:12.5px;line-height:1.6}
+.msg .body pre code{background:none;border:none;padding:0;font-size:inherit}
+.msg .body code{font-family:var(--oc-mono,monospace);font-size:12.5px;background:var(--oc-hover,#8882);border-radius:6px;padding:1px 6px}
+.msg .body blockquote{margin:8px 0;padding:2px 0 2px 12px;border-left:2px solid var(--oc-border,#8888);color:var(--oc-muted,#999)}
+.msg .body ul,.msg .body ol{margin:6px 0;padding-left:22px}
+.msg .body li{margin:3px 0}
+.msg .body table{border-collapse:collapse;margin:8px 0;font-size:13px}
+.msg .body th,.msg .body td{border:1px solid var(--oc-border,#8883);padding:5px 10px;text-align:left}
+.msg .body th{background:var(--oc-hover,#8881)}
+.msg .body img{max-width:100%;border-radius:8px}
 .msg .body a{color:var(--oc-primary-text,var(--oc-primary,#3574f0))}
+.msg .body h1,.msg .body h2,.msg .body h3{font-size:1.05em;margin:12px 0 6px}
 .imgph{border:1px dashed var(--oc-border,#8888);border-radius:8px;padding:8px;font-size:12px;color:var(--oc-muted,#999);cursor:pointer}
 /* 底部：原生 composer */
 #composer{padding:10px 12px 12px;max-width:860px;width:100%;margin:0 auto}
@@ -77,6 +87,7 @@ button:disabled{opacity:.5}
 .mut{font-size:12px;color:var(--oc-muted,#999)}.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .sw{font-size:12px;border-radius:999px;padding:4px 10px;border:1px solid var(--oc-border,#8888);background:transparent;color:var(--oc-muted,#999);cursor:pointer;white-space:nowrap}
 .sw.on{border-color:var(--oc-primary,#3574f0);color:var(--oc-primary-text,var(--oc-primary,#3574f0));font-weight:700}
+.sendbtn{width:32px;height:32px;border-radius:50%!important;padding:0!important;font-size:16px;line-height:1}
 /* 窄 = 导航器：只留目录（频道+话题+配置），正文去中间页看 */
 body[data-narrow="1"] aside{width:100%;max-width:none;max-height:none;border-bottom:none}
 body[data-narrow="1"] main{display:none}
@@ -108,14 +119,8 @@ body:not([data-narrow="1"]) #threadbar{display:flex}
   <div id="thread"></div>
   <div id="composer">
    <div class="box">
-    <div class="row">
-      <button id="sw-stream" class="sw" title="流式输出">流式:开</button>
-      <button id="sw-img" class="sw" title="图片显示">图片:折叠</button>
-      <button id="sw-mask" class="sw" title="头像伪装">伪装:关</button>
-      <span class="mut" id="pos"></span>
-    </div>
     <textarea id="draft" placeholder="回车发送，Ctrl/⌘+回车换行（匿名先存草稿，登录后可发）"></textarea>
-    <div class="row"><button class="btn primary" id="b-send">发送回复</button><span class="mut" id="hint"></span></div>
+    <div class="row"><button id="sw-stream" class="sw" title="流式输出">流式:开</button><button id="sw-img" class="sw" title="图片显示">图片:折叠</button><span class="mut" id="pos"></span><span style="flex:1"></span><span class="mut" id="hint"></span><button class="btn primary sendbtn" id="b-send" title="发送回复">↑</button></div>
    </div>
   </div>
 </main>
@@ -127,7 +132,7 @@ const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 const draftEl = $('draft') as unknown as HTMLTextAreaElement;
 const hintEl = $('hint'), posEl = $('pos');
 
-const BUILD = 'v0.3.0-split';
+const BUILD = 'v0.3.1-native11';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -196,11 +201,9 @@ const paintSwitches = (): void => {
   };
   set('sw-stream', prefs.stream, '流式:开', '流式:关');
   set('sw-img', prefs.images, '图片:开', '图片:折叠');
-  set('sw-mask', prefs.mask, '伪装:开', '伪装:关');
 };
 $('sw-stream').onclick = () => { prefs.stream = !prefs.stream; savePrefs(); paintSwitches(); };
 $('sw-img').onclick = () => { prefs.images = !prefs.images; savePrefs(); paintSwitches(); if (thread) void paintThread(false); };
-$('sw-mask').onclick = () => { prefs.mask = !prefs.mask; savePrefs(); paintSwitches(); paintList(); if (thread) void paintThread(false); };
 
 const paintChannels = (): void => {
   const box = $('channels');
@@ -313,18 +316,19 @@ const hydrateImages = async (scope: HTMLElement): Promise<void> => {
   }
 };
 
-const msgCard = (mine: boolean, author: string, avatar: string, time: number | null, html: string, tags: string): string =>
-  `<div class="msg${mine ? ' mine' : ''}"><div class="who"><img src="${avatar}" alt="" loading="lazy"/><span>${esc(author)}</span><span>${rel(time)}</span>${tags}</div><div class="bubble"><div class="body">${proxyImg(html)}</div></div></div>`;
+const msgCard = (mine: boolean, author: string, time: number | null, html: string, tags: string): string =>
+  mine ? `<div class="msg mine"><div class="bubble"><div class="body">${proxyImg(html)}</div></div></div>`
+    : `<div class="msg theirs"><div class="bubble"><div class="body">${proxyImg(html)}</div></div><div class="meta"><span>${esc(author)}</span><span>${rel(time)}</span>${tags}</div></div>`;
 
 const paintThread = async (animate: boolean): Promise<void> => {
   threadEl.innerHTML = '';
   posEl.textContent = '';
   if (!thread) { paintThreadPlaceholder(); return; }
   const cards: string[] = [];
-  if (thread.opening) cards.push(msgCard(true, thread.opening.author, avatarOf(thread.opening.author, thread.opening.avatar), thread.opening.time, thread.opening.html, thread.opening.byAuthor ? '<span class="op">楼主</span>' : ''));
+  if (thread.opening) cards.push(msgCard(true, thread.opening.author, thread.opening.time, thread.opening.html, ''));
   thread.posts.forEach((p) => {
     const tags = `${p.byAuthor ? '<span class="op">楼主</span>' : ''}<span>#${p.floor}</span>${p.replyTo ? `<span>回复 #${p.replyTo}</span>` : ''}${p.likes !== null ? `<span>❤${p.likes}</span>` : ''}`;
-    cards.push(msgCard(false, p.author, avatarOf(p.author, p.avatar), p.time, p.html, tags));
+    cards.push(msgCard(false, p.author, p.time, p.html, tags));
   });
   if (!prefs.stream || !animate) {
     threadEl.innerHTML = cards.join('') + (thread.more ? `<button class="btn" id="more">加载更多回复</button>` : '');

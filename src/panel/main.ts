@@ -77,18 +77,13 @@ button:disabled{opacity:.5}
 .mut{font-size:12px;color:var(--oc-muted,#999)}.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .sw{font-size:12px;border-radius:999px;padding:4px 10px;border:1px solid var(--oc-border,#8888);background:transparent;color:var(--oc-muted,#999);cursor:pointer;white-space:nowrap}
 .sw.on{border-color:var(--oc-primary,#3574f0);color:var(--oc-primary-text,var(--oc-primary,#3574f0));font-weight:700}
-/* 窄 rail：频道横滑 + 列表/正文切换 */
-body[data-narrow="1"] #app{flex-direction:column}
-body[data-narrow="1"] aside{width:100%;max-width:none;max-height:44%;border-bottom:1px solid var(--oc-border,#8883);padding:6px}
-body[data-narrow="1"] #chanrow{display:flex;overflow-x:auto;scrollbar-width:none}
-body[data-narrow="1"] #chanrow::-webkit-scrollbar{display:none}
-body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
-body[data-narrow="1"] main{border-left:none;min-height:0}
-body[data-narrow="1"][data-view="thread"] aside{display:none}
-body[data-narrow="1"] #b-back{display:inline-block}
-#b-back{display:none}
+/* 窄 = 导航器：只留目录（频道+话题+配置），正文去中间页看 */
+body[data-narrow="1"] aside{width:100%;max-width:none;max-height:none;border-bottom:none}
+body[data-narrow="1"] main{display:none}
+/* 宽 = 阅读器：只留正文，目录去 rail 选 */
+body:not([data-narrow="1"]) aside{display:none}
+body:not([data-narrow="1"]) #threadbar{display:flex}
 #threadbar{display:none;padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);align-items:center;gap:8px}
-body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
 #threadbar .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--oc-muted,#999);font-size:12px}
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
@@ -132,7 +127,7 @@ const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 const draftEl = $('draft') as unknown as HTMLTextAreaElement;
 const hintEl = $('hint'), posEl = $('pos');
 
-const BUILD = 'v0.2.3-nobar';
+const BUILD = 'v0.3.0-split';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -189,8 +184,11 @@ const loadPrefs = async (): Promise<void> => {
   if (v && typeof v.stream === 'boolean') prefs = v;
   proxy = (await storeGet('moyu:proxy') as string | undefined) ?? '';
   (document.querySelector('#cfg-proxy') as HTMLInputElement).value = proxy;
+  const ch = (await storeGet(`moyu:channel:${COMMUNITY}`) as string | undefined) ?? '';
+  if (ch && INFO.channels.some((c) => c.id === ch)) channel = ch;
   paintSwitches();
 };
+const isNarrow = (): boolean => document.body.dataset.narrow === '1';
 const savePrefs = (): void => { void storeSet(`moyu:prefs:${COMMUNITY}`, prefs); };
 const paintSwitches = (): void => {
   const set = (id: string, on: boolean, a: string, b: string): void => {
@@ -211,7 +209,7 @@ const paintChannels = (): void => {
     const b = document.createElement('button');
     b.className = 'nrow chan' + (channel === c.id ? ' active' : '');
     b.innerHTML = `<span class="dot">#</span><span class="tt">${esc(c.name)}</span>`;
-    b.onclick = () => { if (channel !== c.id) { channel = c.id; listAt = 0; paintChannels(); void pollList(true); } };
+    b.onclick = () => { if (channel !== c.id) { channel = c.id; listAt = 0; void storeSet(`moyu:channel:${COMMUNITY}`, channel); paintChannels(); void pollList(true); } };
     box.appendChild(b);
   }
 };
@@ -350,6 +348,11 @@ const paintThread = async (animate: boolean): Promise<void> => {
 
 const pollList = async (force = false): Promise<void> => {
   if (busy || document.hidden) return;
+  // 频道以 rail 那边最后一次切换为准（两边共用 storage）
+  const storedCh = (await storeGet(`moyu:channel:${COMMUNITY}`) as string | undefined) ?? '';
+  if (storedCh && storedCh !== channel && INFO.channels.some((c) => c.id === storedCh)) {
+    channel = storedCh; listAt = 0;
+  }
   if (!force && Date.now() - listAt < LIST_TTL && topics.length > 0) return;
   busy = true;
   try {
@@ -360,8 +363,8 @@ const pollList = async (force = false): Promise<void> => {
     topics = j.topics ?? [];
     listAt = Date.now();
     paintList();
-    // 原生聊天进来即有内容：首次加载自动打开第一帖
-    if (!current && topics.length > 0) { void openTopic(topics[0]!); return; }
+    // 宽页首次加载自动打开第一帖（rail 那边只导航不自动开）
+    if (!isNarrow() && !current && topics.length > 0) { void openTopic(topics[0]!); return; }
   } catch (e) {
     const code = (e as { code?: string })?.code;
     const hint = code === 'NO_SERVICE' ? '（service 没起来：去 设置→扩展 看阅读卡片上的 service 错误）'
@@ -372,11 +375,47 @@ const pollList = async (force = false): Promise<void> => {
 };
 
 const openTopic = async (t: Topic): Promise<void> => {
+  // 窄 rail = 纯导航：只把 id 递给中间页，自己不加载正文
+  if (isNarrow()) {
+    await storeSet(`moyu:open:${COMMUNITY}`, { id: t.id });
+    await host.toast({ kind: 'info', message: '已送往阅读页，打开「阅读 V」查看' });
+    current = t; paintList();
+    return;
+  }
   current = t; thread = null; paintList();
-  if (document.body.dataset.narrow === '1') document.body.dataset.view = 'thread';
   draftEl.value = (await storeGet(`moyu:draft:${COMMUNITY}:${t.id}`) as string | undefined) ?? '';
   hintEl.textContent = '匿名阅读；回复需登录（MVP 未接，先存草稿）';
   await openPage(1, true);
+};
+
+// 中间页按 id 直读（rail 递过来的），列表里没有也照读
+const openById = async (id: string): Promise<void> => {
+  try {
+    const r = await svc('GET', `/thread?community=${COMMUNITY}&id=${encodeURIComponent(id)}&page=1`);
+    const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
+    if (!j.ok || !j.thread) { say(esc(j.error ?? '正文失败')); return; }
+    say('');
+    current = j.thread.topic; thread = j.thread;
+    paintList();
+    draftEl.value = (await storeGet(`moyu:draft:${COMMUNITY}:${id}`) as string | undefined) ?? '';
+    hintEl.textContent = '匿名阅读；回复需登录（MVP 未接，先存草稿）';
+    await paintThread(true);
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    say(esc(`正文失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}`));
+  }
+};
+
+// rail → page 接力：有待读 id 就打开并清除
+const checkPending = async (): Promise<void> => {
+  if (isNarrow()) return;
+  const p = await storeGet(`moyu:open:${COMMUNITY}`) as { id?: string } | undefined;
+  if (!p?.id || p.id === current?.id) return;
+  await storeSet(`moyu:open:${COMMUNITY}`, null);
+  if (document.hidden) return;
+  const known = topics.find((t) => t.id === p.id);
+  if (known) await openTopic(known);
+  else await openById(p.id);
 };
 
 const openPage = async (page: number, animate: boolean): Promise<void> => {
@@ -454,7 +493,7 @@ let escCount = 0;
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { escCount++; if (escCount >= 2) { escCount = 0; void host.close(); } setTimeout(() => (escCount = 0), 500); }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { void checkPending(); void pollList(false); } });
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 paintThreadPlaceholder();
@@ -467,5 +506,5 @@ const fitNarrow = (): void => {
 };
 new ResizeObserver(() => fitNarrow()).observe(document.documentElement);
 fitNarrow();
-void loadPrefs().then(() => pollList(true));
-setInterval(() => void pollList(false), 60_000);
+void loadPrefs().then(() => { paintChannels(); void checkPending(); void pollList(true); });
+setInterval(() => { void checkPending(); void pollList(false); }, 15_000);

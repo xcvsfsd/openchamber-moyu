@@ -1,0 +1,27 @@
+{
+  "name": "openchamber-moyu-linuxdo",
+  "version": "0.1.0",
+  "description": "linux.do 摸鱼阅读：话题=会话的假聊天页（匿名可读）",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.7.2"
+    },
+    "contributes": {
+      "panel": {
+        "id": "moyu-linuxdo",
+        "name": "阅读 L",
+        "icon": "assets/l.svg",
+        "entry": "panel/index.html"
+      },
+      "page": true,
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host"
+      }
+    }
+  }
+}

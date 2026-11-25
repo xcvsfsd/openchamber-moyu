@@ -56,7 +56,7 @@ button:disabled{opacity:.5}
 #msg:empty{display:none}
 #msg{padding:0 12px}#msg .err{margin-top:8px}
 .err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
-#thread{flex:1;overflow-y:auto;padding:18px 24px;display:flex;flex-direction:column;gap:18px;max-width:980px;width:100%;margin:0 auto}
+#thread{flex:1;overflow-y:auto;padding:18px 20px 48px;display:flex;flex-direction:column;gap:18px;max-width:1120px;width:100%;margin:0 auto}
 .act{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--oc-muted,#999)}
 .act .sep{opacity:.6}
 .msg{display:flex;flex-direction:column;gap:2px;max-width:100%}
@@ -81,15 +81,7 @@ button:disabled{opacity:.5}
 .msg .body a{color:var(--oc-primary-text,var(--oc-primary,#3574f0))}
 .msg .body h1,.msg .body h2,.msg .body h3{font-size:1.05em;margin:12px 0 6px}
 .imgph{border:1px dashed var(--oc-border,#8888);border-radius:8px;padding:8px;font-size:12px;color:var(--oc-muted,#999);cursor:pointer}
-/* 底部：原生 composer */
-#composer{padding:10px 12px 12px;max-width:860px;width:100%;margin:0 auto}
-#composer .box{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
-#composer textarea{width:100%;min-height:52px;resize:vertical;border:none;background:transparent;color:inherit;outline:none}
-#composer textarea::placeholder{color:var(--oc-subtle,#777)}
 .mut{font-size:12px;color:var(--oc-muted,#999)}.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.sw{font-size:12px;border-radius:999px;padding:4px 10px;border:1px solid var(--oc-border,#8888);background:transparent;color:var(--oc-muted,#999);cursor:pointer;white-space:nowrap}
-.sw.on{border-color:var(--oc-primary,#3574f0);color:var(--oc-primary-text,var(--oc-primary,#3574f0));font-weight:700}
-.sendbtn{width:32px;height:32px;border-radius:50%!important;padding:0!important;font-size:16px;line-height:1}
 /* 窄 = 导航器：只留目录（频道+话题+配置），正文去中间页看 */
 body[data-narrow="1"] aside{width:100%;max-width:none;max-height:none;border-bottom:none}
 body[data-narrow="1"] main{display:none}
@@ -116,22 +108,14 @@ body:not([data-narrow="1"]) aside{display:none}
 <main>
   <div id="msg"></div>
   <div id="thread"></div>
-  <div id="composer">
-   <div class="box">
-    <textarea id="draft" placeholder="回车发送，Ctrl/⌘+回车换行（匿名先存草稿，登录后可发）"></textarea>
-    <div class="row"><button id="sw-stream" class="sw" title="流式输出">流式:开</button><button id="sw-img" class="sw" title="图片显示">图片:折叠</button><span class="mut" id="pos"></span><span style="flex:1"></span><span class="mut" id="hint"></span><button class="btn primary sendbtn" id="b-send" title="发送回复">↑</button></div>
-   </div>
-  </div>
 </main>
 </div>`;
 
 const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${id}`) as T;
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
-const draftEl = $('draft') as unknown as HTMLTextAreaElement;
-const hintEl = $('hint'), posEl = $('pos');
 
-const BUILD = 'v0.3.2-act11';
+const BUILD = 'v0.3.3-readonly';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -195,14 +179,12 @@ const loadPrefs = async (): Promise<void> => {
 const isNarrow = (): boolean => document.body.dataset.narrow === '1';
 const savePrefs = (): void => { void storeSet(`moyu:prefs:${COMMUNITY}`, prefs); };
 const paintSwitches = (): void => {
-  const set = (id: string, on: boolean, a: string, b: string): void => {
-    const el = $(id); el.textContent = on ? a : b; el.classList.toggle('on', on);
-  };
-  set('sw-stream', prefs.stream, '流式:开', '流式:关');
-  set('sw-img', prefs.images, '图片:开', '图片:折叠');
+  // 开关已随回复框移除，这里只做空保护（图片占位点击会调到）
+  for (const id of ['sw-stream', 'sw-img']) {
+    const el = document.querySelector(`#${id}`);
+    if (!el) continue;
+  }
 };
-$('sw-stream').onclick = () => { prefs.stream = !prefs.stream; savePrefs(); paintSwitches(); };
-$('sw-img').onclick = () => { prefs.images = !prefs.images; savePrefs(); paintSwitches(); if (thread) void paintThread(false); };
 
 const paintChannels = (): void => {
   const box = $('channels');
@@ -318,7 +300,6 @@ const msgCard = (mine: boolean, author: string, time: number | null, html: strin
 
 const paintThread = async (animate: boolean): Promise<void> => {
   threadEl.innerHTML = '';
-  posEl.textContent = '';
   if (!thread) { paintThreadPlaceholder(); return; }
   // 原生“活动行”：帖子上下文（作者·频道·回复数·时间）
   const t = thread.topic;
@@ -330,7 +311,7 @@ const paintThread = async (animate: boolean): Promise<void> => {
     cards.push(msgCard(false, p.author, p.time, p.html, tags));
   });
   if (!prefs.stream || !animate) {
-    threadEl.innerHTML = cards.join('') + (thread.more ? `<button class="btn" id="more">加载更多回复</button>` : '');
+    threadEl.innerHTML = cards.join('') + (thread.more ? `<button class="btn" id="more">继续加载第 ${thread.page + 1} 页</button>` : '');
   } else {
     for (const c of cards) {
       const d = document.createElement('div');
@@ -338,14 +319,12 @@ const paintThread = async (animate: boolean): Promise<void> => {
       threadEl.appendChild(d.firstElementChild!);
       await new Promise((r) => setTimeout(r, 60));
     }
-    if (thread.more) { const b = document.createElement('button'); b.className = 'btn'; b.id = 'more'; b.textContent = '加载更多回复'; threadEl.appendChild(b); }
+    if (thread.more) { const b = document.createElement('button'); b.className = 'btn'; b.id = 'more'; b.textContent = `继续加载第 ${thread.page + 1} 页`; threadEl.appendChild(b); }
   }
   const moreBtn = threadEl.querySelector('#more');
   if (moreBtn) (moreBtn as HTMLButtonElement).onclick = () => void openPage(thread!.page + 1, true);
   await hydrateImages(threadEl);
   const key = `moyu:pos:${COMMUNITY}:${current!.id}`;
-  const saved = await storeGet(key) as { page?: number } | undefined;
-  posEl.textContent = `第 ${thread.page} 页${thread.more ? '（还有）' : ''}${saved?.page ? ` · 上次看到第 ${saved.page} 页` : ''}`;
   void storeSet(key, { page: thread.page });
 };
 
@@ -386,8 +365,6 @@ const openTopic = async (t: Topic): Promise<void> => {
     return;
   }
   current = t; thread = null; paintList();
-  draftEl.value = (await storeGet(`moyu:draft:${COMMUNITY}:${t.id}`) as string | undefined) ?? '';
-  hintEl.textContent = '匿名阅读；回复需登录（MVP 未接，先存草稿）';
   await openPage(1, true);
 };
 
@@ -400,8 +377,6 @@ const openById = async (id: string): Promise<void> => {
     say('');
     current = j.thread.topic; thread = j.thread;
     paintList();
-    draftEl.value = (await storeGet(`moyu:draft:${COMMUNITY}:${id}`) as string | undefined) ?? '';
-    hintEl.textContent = '匿名阅读；回复需登录（MVP 未接，先存草稿）';
     await paintThread(true);
   } catch (e) {
     const code = (e as { code?: string })?.code;
@@ -452,33 +427,7 @@ $('b-save').onclick = async () => {
   $('cfg-out').textContent = topics.length > 0 ? `连通（${topics.length} 条）` : '仍失败，看列表上方红字（可能是代理地址不对或要认证）';
 };
 
-// 快捷键 R 刷新 / O 浏览器打开（头部按钮已删，功能保留）
-
-// 草稿：按社区+帖子保留，发送成功才清；失败永不自动重发（moyu）
-draftEl.addEventListener('input', () => {
-  if (current) void storeSet(`moyu:draft:${COMMUNITY}:${current.id}`, draftEl.value);
-});
-let sending = false;
-const send = async (): Promise<void> => {
-  if (sending || !current) return;
-  const content = draftEl.value.trim();
-  if (!content) return;
-  sending = true;
-  try {
-    const r = await svc('POST', '/reply', JSON.stringify({ id: current.id, content }));
-    const j = JSON.parse(r.body) as { ok: boolean; error?: string };
-    // MVP：后端回 need-login，保留草稿 + 待确认语气
-    say(esc(j.error ?? '发送失败'));
-    hintEl.textContent = '草稿已保留，登录后重发（不自动重发）。';
-  } finally { sending = false; }
-};
-$('b-send').onclick = () => void send();
-draftEl.addEventListener('keydown', (e) => {
-  if ((e as unknown as { isComposing?: boolean }).isComposing) return;
-  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); void send(); }
-});
-
-// 快捷键：输入框里不触发（moyu：输入时照常写草稿）
+// 快捷键 R 刷新 / O 浏览器打开（只读页，无输入框）
 document.addEventListener('keydown', (e) => {
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;

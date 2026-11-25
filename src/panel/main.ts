@@ -39,7 +39,7 @@ body{margin:0;font:14px/1.6 var(--oc-font,system-ui,sans-serif);background:var(-
 /* 左：原生侧栏 */
 aside{width:300px;min-width:250px;max-width:340px;display:flex;flex-direction:column;padding:10px 8px;gap:2px;overflow-y:auto}
 .sec{font-size:12px;color:var(--oc-muted,#999);padding:8px 10px 4px}
-.nrow{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);cursor:pointer;font:inherit}
+.nrow{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);font:inherit}
 button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.active{background:var(--oc-hover,#8882)}
 .nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere}
@@ -137,7 +137,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.6.2-aiwrap';
+const BUILD = 'v0.6.3-rowbtn';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -272,7 +272,8 @@ const paintList = (): void => {
       ? ' <span class="ext" title="榜单转跳：无站内详情，点卡片去浏览器看原文">↗</span>' : '';
     d.innerHTML = `<span class="tt">${esc(t.title)}${ext}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
     // 有正文的源才挂 AI 按钮（榜单转跳源无内容可总结）
-    if (!(LINK_ONLY as readonly string[]).includes(t.community)) {
+    const linkOnly = (LINK_ONLY as readonly string[]).includes(t.community);
+    if (!linkOnly) {
       const b = document.createElement('button');
       b.className = 'aibtn';
       b.title = 'AI 总结这篇正文';
@@ -280,7 +281,16 @@ const paintList = (): void => {
       b.onclick = (e) => { e.stopPropagation(); void summarize(t, d, b); };
       d.appendChild(b);
     }
-    d.onclick = () => void openTopic(t);
+    // 整行不再跳转：显式按钮进详情 / 直达原文
+    const go = document.createElement('button');
+    go.className = 'aibtn';
+    go.title = linkOnly ? '去浏览器打开原文' : '打开详情';
+    go.textContent = linkOnly ? '↗' : '›';
+    go.onclick = () => {
+      if (linkOnly) void host.openUrl(t.url);
+      else void openTopic(t);
+    };
+    d.appendChild(go);
     topicsEl.appendChild(d);
   }
   const crumb = document.querySelector('#topic-crumb');

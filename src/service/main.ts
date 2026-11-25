@@ -208,7 +208,8 @@ const HOT_IDS = ['zhihu', 'toutiao', 'csdn', 'oschina', 'infoq'] as const;
 
 const stripTags = (s: string): string =>
   s.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCharCode(Number(n))).trim();
 
 const tophubList = async (community: CommunityId, proxy?: string | null): Promise<Topic[]> => {
   const board = TOPHUB_BOARDS[community];
@@ -401,6 +402,61 @@ const infoqThread = async (id: string, proxy?: string | null): Promise<Thread> =
   return { topic: t, opening, posts: [], page: 1, more: false };
 };
 
+// ---- 联网搜索（Bing 直出页 via h1，供无正文源的 ✦ 总结用；只取标题+摘要，不进原文） ----
+export type SearchHit = { title: string; snippet: string; url: string; site: string };
+const searchCache = new Map<string, { at: number; results: SearchHit[] }>();
+const SEARCH_CACHE_TTL_MS = 6 * 3600 * 1000;
+const bingSearch = async (q: string, proxy?: string | null): Promise<SearchHit[]> => {
+  const key = q.slice(0, 120);
+  const hit = searchCache.get(key);
+  if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL_MS) return hit.results;
+  await pace();
+  const ctrl = new AbortController();
+  let body: string;
+  try {
+    const h = await h1get(`https://www.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-CN`, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
+    if (h.status !== 200) throw new Error(`搜索返回了 ${h.status}`);
+    body = h.body.toString('utf8');
+  } catch (e) {
+    if (e instanceof Error && /搜索返回/.test(e.message)) throw e;
+    throw new Error('搜索暂时连不上过一会儿再试');
+  }
+  const blocks = body.match(/<li class="b_algo"[\s\S]*?<\/li>/g) ?? [];
+  // 相关性门：Bing 偶尔给机器人掺假结果，标题+摘要里凑不够 query 的二字片段就丢掉
+  const qchars = q.replace(/[^\p{Script=Han}A-Za-z0-9]+/gu, '');
+  const grams = new Set<string>();
+  for (let i = 0; i + 1 < qchars.length; i++) grams.add(qchars.slice(i, i + 2));
+  const need = Math.min(2, grams.size);
+  const out: SearchHit[] = [];
+  for (const b of blocks) {
+    const raw = b.replace(/&amp;/g, '&');
+    const href = /<h2><a[^>]+href="([^"]+)"/.exec(raw)?.[1] ?? '';
+    let url = '';
+    const m = /[?&]u=a1([^&]+)/.exec(href);
+    if (m) {
+      try {
+        const pad = m[1]!.replace(/-/g, '+').replace(/_/g, '/');
+        url = Buffer.from(pad, 'base64').toString('utf8');
+      } catch { /* 忽略，用展示链接 */ }
+    }
+    if (!url && /^https?:\/\//.test(href) && !/bing\.com/i.test(href)) url = href;
+    const title = stripTags(/<h2><a[^>]*>([\s\S]*?)<\/a><\/h2>/.exec(raw)?.[1] ?? '').slice(0, 120);
+    if (!title) continue;
+    const site = /<cite>([^<]*)<\/cite>/.exec(raw)?.[1]?.trim() ?? '';
+    const snippet = stripTags(/<div class="b_caption">[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/.exec(raw)?.[1] ?? '').slice(0, 200);
+    if (need > 0) {
+      const hay = title + snippet;
+      let hits = 0;
+      for (const g of grams) if (hay.includes(g)) hits++;
+      if (hits < need) continue; // 疑似假结果/文不对题
+    }
+    out.push({ title, snippet, url, site });
+    if (out.length >= 8) break;
+  }
+  if (out.length === 0) throw new Error('搜索没有返回可用结果');
+  searchCache.set(key, { at: Date.now(), results: out });
+  return out;
+};
 // ---- 缓存（列表 3 分钟，到期页面可见时再刷） ----
 const listCache = new Map<string, { at: number; topics: Topic[] }>();
 const cachedList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<{ topics: Topic[]; cached: boolean }> => {
@@ -480,6 +536,17 @@ const server = http.createServer((req, res) => {
       return community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     })().then(
       (thread) => json(res, 200, { ok: true, thread }),
+      (e) => json(res, 200, { ok: false, error: netError(e).message }),
+    );
+    return;
+  }
+  // 联网搜索：无正文源的 ✦ 用（只回标题+摘要，不进原文）
+  if (req.method === 'GET' && url.pathname === '/search') {
+    const q = url.searchParams.get('q') ?? '';
+    if (!q.trim()) return json(res, 400, { ok: false, error: 'bad-query' });
+    const px = proxyOf(req, url) ?? undefined;
+    bingSearch(q.slice(0, 120), px).then(
+      (results) => json(res, 200, { ok: true, results }),
       (e) => json(res, 200, { ok: false, error: netError(e).message }),
     );
     return;

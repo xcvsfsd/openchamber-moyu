@@ -83,7 +83,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics');
 
-const BUILD = 'v0.8.2-clean';
+const BUILD = 'v0.8.3-websearch';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -216,16 +216,36 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
       const text = [th.opening ? htmlText(th.opening.html) : '', ...th.posts.map((p) => htmlText(p.html))]
         .filter(Boolean).join('\n').slice(0, 3500);
       if (!text) {
-        // 无可抓正文：退化为标题版总结
+        // 无可抓正文：先联网搜这条标题，用搜索摘要总结；搜不到才退化为标题版
         if (!(TITLE_ONLY as readonly string[]).includes(t.community)) throw new Error('这篇没有可总结的正文');
-        const g = await host.generate({
-          system: '你是中文标题提炼助手。只根据帖子标题和版块信息，用一句话（不超过40字）概括它在讨论什么；严禁编造标题里没有的具体事实；只输出这一句话。',
-          prompt: `【${info().name}/${t.channel ?? ''}】${t.title}`,
-          maxOutputTokens: 64,
-        });
-        s = g.text.trim().slice(0, 80);
-        if (!s) throw new Error('小模型没有返回总结');
-        s += '（标题版）';
+        let web = '';
+        try {
+          const sr = await svc('GET', `/search?q=${encodeURIComponent(t.title)}`);
+          const sj = JSON.parse(sr.body) as { ok: boolean; results?: Array<{ title: string; snippet: string; site: string }>; error?: string };
+          if (sj.ok && sj.results && sj.results.length > 0) {
+            const ctx = sj.results.slice(0, 5)
+              .map((r, i) => `${i + 1}. 「${r.title}」${r.snippet}${r.site ? `（${r.site}）` : ''}`)
+              .join('\n').slice(0, 2500);
+            const g = await host.generate({
+              system: '你是中文热点总结助手。根据多条搜索结果（标题+摘要），用2-4句话概括这件事的核心信息；只写多数来源一致的内容，不确定的加“据报道”；严禁编造；只输出总结。',
+              prompt: `【${t.title}】\n${ctx}`,
+              maxOutputTokens: 256,
+            });
+            web = g.text.trim().slice(0, 500);
+          }
+        } catch { /* 搜索失败就退回标题版 */ }
+        if (web) {
+          s = web + '（联网版）';
+        } else {
+          const g = await host.generate({
+            system: '你是中文标题提炼助手。只根据帖子标题和版块信息，用一句话（不超过40字）概括它在讨论什么；严禁编造标题里没有的具体事实；只输出这一句话。',
+            prompt: `【${info().name}/${t.channel ?? ''}】${t.title}`,
+            maxOutputTokens: 64,
+          });
+          s = g.text.trim().slice(0, 80);
+          if (!s) throw new Error('小模型没有返回总结');
+          s += '（标题版）';
+        }
       } else {
         const g = await host.generate({
           system: '你是中文内容总结助手。根据给定的帖子内容，用2-4句话概括核心观点或结论；严禁编造原文没有的信息；只输出总结。',

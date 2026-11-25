@@ -680,7 +680,7 @@ var TOPHUB_BOARDS = {
   csdn: { hash: "n3moBVoN5O", sub: "热点" }
 };
 var HOT_IDS = ["zhihu", "toutiao", "csdn", "oschina", "infoq"];
-var stripTags = (s) => s.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+var stripTags = (s) => s.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).trim();
 var tophubList = async (community, proxy) => {
   const board = TOPHUB_BOARDS[community];
   if (!board)
@@ -929,6 +929,69 @@ var infoqThread = async (id, proxy) => {
   };
   return { topic: t, opening, posts: [], page: 1, more: false };
 };
+var searchCache = new Map;
+var SEARCH_CACHE_TTL_MS = 6 * 3600 * 1000;
+var bingSearch = async (q, proxy) => {
+  const key = q.slice(0, 120);
+  const hit = searchCache.get(key);
+  if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL_MS)
+    return hit.results;
+  await pace();
+  const ctrl = new AbortController;
+  let body;
+  try {
+    const h = await h1get(`https://www.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-CN`, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
+    if (h.status !== 200)
+      throw new Error(`搜索返回了 ${h.status}`);
+    body = h.body.toString("utf8");
+  } catch (e) {
+    if (e instanceof Error && /搜索返回/.test(e.message))
+      throw e;
+    throw new Error("搜索暂时连不上过一会儿再试");
+  }
+  const blocks = body.match(/<li class="b_algo"[\s\S]*?<\/li>/g) ?? [];
+  const qchars = q.replace(/[^\p{Script=Han}A-Za-z0-9]+/gu, "");
+  const grams = new Set;
+  for (let i = 0;i + 1 < qchars.length; i++)
+    grams.add(qchars.slice(i, i + 2));
+  const need = Math.min(2, grams.size);
+  const out = [];
+  for (const b of blocks) {
+    const raw = b.replace(/&amp;/g, "&");
+    const href = /<h2><a[^>]+href="([^"]+)"/.exec(raw)?.[1] ?? "";
+    let url = "";
+    const m = /[?&]u=a1([^&]+)/.exec(href);
+    if (m) {
+      try {
+        const pad = m[1].replace(/-/g, "+").replace(/_/g, "/");
+        url = Buffer.from(pad, "base64").toString("utf8");
+      } catch {}
+    }
+    if (!url && /^https?:\/\//.test(href) && !/bing\.com/i.test(href))
+      url = href;
+    const title = stripTags(/<h2><a[^>]*>([\s\S]*?)<\/a><\/h2>/.exec(raw)?.[1] ?? "").slice(0, 120);
+    if (!title)
+      continue;
+    const site = /<cite>([^<]*)<\/cite>/.exec(raw)?.[1]?.trim() ?? "";
+    const snippet = stripTags(/<div class="b_caption">[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/.exec(raw)?.[1] ?? "").slice(0, 200);
+    if (need > 0) {
+      const hay = title + snippet;
+      let hits = 0;
+      for (const g of grams)
+        if (hay.includes(g))
+          hits++;
+      if (hits < need)
+        continue;
+    }
+    out.push({ title, snippet, url, site });
+    if (out.length >= 8)
+      break;
+  }
+  if (out.length === 0)
+    throw new Error("搜索没有返回可用结果");
+  searchCache.set(key, { at: Date.now(), results: out });
+  return out;
+};
 var listCache = new Map;
 var cachedList = async (community, channel, proxy) => {
   const key = `${community}/${channel}/${proxy ?? ""}`;
@@ -1020,6 +1083,14 @@ var server = http.createServer((req, res) => {
         return hotThread(community, id, px);
       return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     })().then((thread) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/search") {
+    const q = url.searchParams.get("q") ?? "";
+    if (!q.trim())
+      return json(res, 400, { ok: false, error: "bad-query" });
+    const px = proxyOf(req, url) ?? undefined;
+    bingSearch(q.slice(0, 120), px).then((results) => json(res, 200, { ok: true, results }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
     return;
   }
   if (req.method === "GET" && url.pathname === "/image") {

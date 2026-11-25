@@ -45,7 +45,9 @@ button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere}
 .nrow .mm{font-size:12px;color:var(--oc-muted,#999);white-space:nowrap}
 .nrow .ext{color:var(--oc-muted,#999);font-size:12px;white-space:nowrap;margin-left:4px}
-.nrow .sum{display:block;font-size:12.5px;opacity:.85;margin-top:1px}
+.nrow .aibtn{flex:0 0 auto;align-self:center;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 9px;white-space:nowrap}
+.nrow .aibtn:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
+.nrow .aisum{flex:1 1 100%;font-size:12.5px;line-height:1.7;opacity:.92;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
 .nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1}
 .nrow.chan .dot{color:var(--oc-muted,#999)}
 body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
@@ -119,7 +121,6 @@ body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
   <div id="cfgside">
     <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
     <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" />
-    <label class="mut" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="sw-sums" style="width:auto" /> 标题 AI 一句话总结</label>
     <button class="btn primary" id="b-save">保存并测试</button>
     <div class="mut" id="cfg-out"></div>
   </div>
@@ -136,12 +137,12 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.6.0-sums';
+const BUILD = 'v0.6.1-aibtn';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
-type Prefs = { stream: boolean; images: boolean; mask: boolean; sums: boolean };
-let prefs: Prefs = { stream: true, images: false, mask: false, sums: true };
+type Prefs = { stream: boolean; images: boolean; mask: boolean };
+let prefs: Prefs = { stream: true, images: false, mask: false };
 let proxy = '';
 let channel = info().channels[0]!.id;
 let topics: Topic[] = [];
@@ -197,10 +198,8 @@ const loadPrefs = async (): Promise<void> => {
   if (COMMUNITIES.some((c) => c.id === savedC)) community = savedC;
   const v = await storeGet(`moyu:prefs:${community}`) as Prefs | undefined;
   if (v && typeof v.stream === 'boolean') prefs = v;
-  if (typeof prefs.sums !== 'boolean') prefs.sums = true;
   proxy = (await storeGet('moyu:proxy') as string | undefined) ?? '';
   (document.querySelector('#cfg-proxy') as HTMLInputElement).value = proxy;
-  syncSumSwitch();
   const ch = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
   channel = info().channels[0]!.id;
   if (ch && info().channels.some((c) => c.id === ch)) channel = ch;
@@ -208,51 +207,6 @@ const loadPrefs = async (): Promise<void> => {
 };
 const isNarrow = (): boolean => document.body.dataset.narrow === '1';
 const savePrefs = (): void => { void storeSet(`moyu:prefs:${community}`, prefs); };
-const syncSumSwitch = (): void => {
-  const el = document.querySelector('#sw-sums') as HTMLInputElement | null;
-  if (el) el.checked = prefs.sums;
-};
-
-// AI 一句话总结：列表只有标题，基于标题+版块提炼（不编造正文细节），逐条串行，结果按话题缓存
-let sumRun = 0;
-const sumText = async (t: Topic): Promise<string | null> => {
-  const key = `moyu:sum:${community}:${t.id}:${t.title.slice(0, 40)}`;
-  const hit = await storeGet(key);
-  if (typeof hit === 'string' && hit) return hit;
-  try {
-    const r = await host.generate({
-      system: '你是中文标题提炼助手。只根据帖子标题和版块信息，用一句话（不超过30字）概括它在讨论什么；严禁编造标题里没有的具体事实；只输出这一句话。',
-      prompt: `【${info().name}/${t.channel ?? ''}】${t.title}`,
-      maxOutputTokens: 64,
-    });
-    const s = r.text.trim().slice(0, 80);
-    if (s) await storeSet(key, s);
-    return s || null;
-  } catch (e) {
-    const code = (e as { code?: string })?.code;
-    if (code === 'NO_MODEL' || code === 'MODEL_FAILED') {
-      prefs.sums = false; savePrefs(); syncSumSwitch();
-      ($('cfg-out') as HTMLElement).textContent =
-        code === 'NO_MODEL' ? '无可用小模型，AI 总结已关闭' : '小模型出错，AI 总结已暂停（重开面板再试）';
-      sumRun++;
-    }
-    return null;
-  }
-};
-const kickSums = async (): Promise<void> => {
-  if (!prefs.sums || topics.length === 0) return;
-  const run = ++sumRun;
-  for (const t of topics) {
-    if (run !== sumRun) return;
-    const el = topicsEl.querySelector(`[data-sum="${t.id}"]`);
-    if (!el || el.getAttribute('data-done') === '1') continue;
-    const s = await sumText(t);
-    if (run !== sumRun) return;
-    if (s) { el.textContent = `✦ ${s}`; el.setAttribute('data-done', '1'); }
-    else if (!prefs.sums) return;
-    else el.textContent = '';
-  }
-};
 const paintSwitches = (): void => {
   // 开关已随回复框移除，这里只做空保护（图片占位点击会调到）
   for (const id of ['sw-stream', 'sw-img']) {
@@ -281,8 +235,6 @@ const switchCommunity = async (id: CommunityId): Promise<void> => {
   (document.querySelector('#cfg-out') as HTMLElement).textContent = '';
   const v = await storeGet(`moyu:prefs:${community}`) as Prefs | undefined;
   if (v && typeof v.stream === 'boolean') prefs = v;
-  if (typeof prefs.sums !== 'boolean') prefs.sums = true;
-  syncSumSwitch();
   const ch = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
   if (ch && info().channels.some((c) => c.id === ch)) channel = ch;
   paintCommunities();
@@ -318,14 +270,72 @@ const paintList = (): void => {
     // 榜单转跳源（无站内详情）：标题后挂 ↗，点进卡片去浏览器看原文
     const ext = (LINK_ONLY as readonly string[]).includes(t.community)
       ? ' <span class="ext" title="榜单转跳：无站内详情，点卡片去浏览器看原文">↗</span>' : '';
-    const sum = prefs.sums ? `<br><span class="sum" data-sum="${t.id}">✦ 总结中…</span>` : '';
-    d.innerHTML = `<span class="tt">${esc(t.title)}${ext}${sum}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
+    d.innerHTML = `<span class="tt">${esc(t.title)}${ext}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
+    // 有正文的源才挂 AI 按钮（榜单转跳源无内容可总结）
+    if (!(LINK_ONLY as readonly string[]).includes(t.community)) {
+      const b = document.createElement('button');
+      b.className = 'aibtn';
+      b.title = 'AI 总结这篇正文';
+      b.textContent = '✦';
+      b.onclick = (e) => { e.stopPropagation(); void summarize(t, d, b); };
+      d.appendChild(b);
+    }
     d.onclick = () => void openTopic(t);
     topicsEl.appendChild(d);
   }
   const crumb = document.querySelector('#topic-crumb');
   if (crumb) crumb.textContent = current ? `/ ${current.title.slice(0, 24)}` : '';
-  void kickSums();
+};
+
+// 按需 AI 总结：点 ✦ 拉正文（走 service，与打开帖子同一接口），用小模型总结后展开在行内；结果按话题缓存
+const htmlText = (html: string): string =>
+  html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n').replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"')
+    .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Promise<void> => {
+  const old = row.querySelector('.aisum');
+  if (old) { old.remove(); return; } // 再点收起
+  const key = `moyu:csum:${community}:${t.id}`;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = '…';
+  try {
+    const hit = await storeGet(key);
+    let s = typeof hit === 'string' && hit ? hit : '';
+    if (!s) {
+      const r = await svc('GET', `/thread?community=${community}&id=${encodeURIComponent(t.id)}&page=1`);
+      const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
+      if (!j.ok || !j.thread) throw new Error(j.error ?? '正文失败');
+      const th = j.thread;
+      const text = [th.opening ? htmlText(th.opening.html) : '', ...th.posts.map((p) => htmlText(p.html))]
+        .filter(Boolean).join('\n').slice(0, 3500);
+      if (!text) throw new Error('这篇没有可总结的正文');
+      const g = await host.generate({
+        system: '你是中文内容总结助手。根据给定的帖子内容，用2-4句话概括核心观点或结论；严禁编造原文没有的信息；只输出总结。',
+        prompt: `【${t.title}】\n${text}`,
+        maxOutputTokens: 256,
+      });
+      s = g.text.trim().slice(0, 500);
+      if (!s) throw new Error('小模型没有返回总结');
+      await storeSet(key, s);
+    }
+    const d = document.createElement('div');
+    d.className = 'aisum';
+    d.textContent = `✦ ${s}`;
+    row.appendChild(d);
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    const msg = code === 'NO_MODEL' ? '无可用小模型'
+      : code === 'MODEL_FAILED' ? '小模型出错'
+      : e instanceof Error ? e.message : '未知错误';
+    const d = document.createElement('div');
+    d.className = 'aisum';
+    d.textContent = `总结失败：${msg}`;
+    row.appendChild(d);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 };
 
 const clean = (html: string): string =>
@@ -487,11 +497,6 @@ $('b-save').onclick = async () => {
   listAt = 0;
   await pollList(true);
   $('cfg-out').textContent = topics.length > 0 ? `连通（${topics.length} 条）` : '仍失败，看列表上方红字（可能是代理地址不对或要认证）';
-};
-
-(document.querySelector('#sw-sums') as HTMLInputElement).onchange = (e) => {
-  prefs.sums = (e.target as HTMLInputElement).checked;
-  savePrefs(); sumRun++; paintList();
 };
 
 // 快捷键（只读页；输入框聚焦时不触发）

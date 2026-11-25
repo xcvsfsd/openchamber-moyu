@@ -101,6 +101,9 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
 body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
 #threadbar .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--oc-muted,#999);font-size:12px}
 #thread[data-hot="1"] .msg.mine .bubble{cursor:pointer}
+#thread[data-hot="1"] .msg.article{cursor:pointer}
+.msg.article{max-width:100%}
+.msg.article .body{font-size:15px;line-height:1.85}
 
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
@@ -131,7 +134,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.5.7-marks';
+const BUILD = 'v0.5.8-flatart';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -316,6 +319,10 @@ const msgCard = (mine: boolean, author: string, time: number | null, html: strin
   mine ? `<div class="msg mine"><div class="bubble"><div class="body">${proxyImg(html)}</div></div></div>`
     : `<div class="msg theirs"><div class="bubble"><div class="body">${proxyImg(html)}</div></div><div class="meta">${[esc(author), rel(time), ...tags].filter(Boolean).join('<span class="sep">·</span>')}</div></div>`;
 
+// 单篇详情（InfoQ 正文 / 榜单转跳卡）：无回帖，不套聊天气泡，全宽平铺
+const articleCard = (html: string): string =>
+  `<div class="msg article"><div class="body">${proxyImg(html)}</div></div>`;
+
 // 帖内链接走宿主浏览器打开（sandbox 里点不开，统一经 openUrl）
 // 热榜原文卡：整块 bubble 可点，直接跳原文（不用精确点中链接文字；InfoQ 有真正在文，不劫持）
 const HOT: readonly string[] = LINK_ONLY;
@@ -323,7 +330,7 @@ threadEl.addEventListener('click', (e) => {
   const a = (e.target as HTMLElement).closest?.('a') as HTMLAnchorElement | null;
   if (a?.href) { e.preventDefault(); void host.openUrl(a.href); return; }
   if (thread && (HOT as readonly string[]).includes(thread.topic.community)) {
-    if ((e.target as HTMLElement).closest?.('.msg.mine')) void host.openUrl(thread.topic.url);
+    if ((e.target as HTMLElement).closest?.('.msg.mine, .msg.article')) void host.openUrl(thread.topic.url);
   }
 });
 
@@ -341,7 +348,9 @@ const paintThread = async (animate: boolean): Promise<void> => {
   if (t.time) actParts.push(rel(t.time));
   const act = `<div class="act"><span>帖子</span><span class="sep">›</span><span>${actParts.join(' · ')}</span></div>`;
   const cards: string[] = [act];
-  if (thread.opening) cards.push(msgCard(true, thread.opening.author, thread.opening.time, thread.opening.html, []));
+  // 热榜单篇（InfoQ 正文 / 榜单转跳卡）：无回帖，正文全宽平铺，不套气泡
+  const flat = [...LINK_ONLY, 'infoq'].includes(thread.topic.community);
+  if (thread.opening) cards.push(flat ? articleCard(thread.opening.html) : msgCard(true, thread.opening.author, thread.opening.time, thread.opening.html, []));
   thread.posts.forEach((p) => {
     const tags = [`<span class="op">楼主</span>`, `#${p.floor}`, p.replyTo ? `回复 #${p.replyTo}` : '', p.likes !== null ? `❤${p.likes}` : ''].filter((s, i) => i === 0 ? p.byAuthor : Boolean(s));
     cards.push(msgCard(false, p.author, p.time, p.html, tags));

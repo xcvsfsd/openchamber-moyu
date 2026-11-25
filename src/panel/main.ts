@@ -129,7 +129,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.8-boss';
+const BUILD = 'v0.3.9-altq';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -409,10 +409,14 @@ $('b-save').onclick = async () => {
   $('cfg-out').textContent = topics.length > 0 ? `连通（${topics.length} 条）` : '仍失败，看列表上方红字（可能是代理地址不对或要认证）';
 };
 
-// 快捷键 R 刷新 / O 浏览器打开（只读页，无输入框）
+// 快捷键（只读页；输入框聚焦时只有 Alt+Q 老板键生效）
 document.addEventListener('keydown', (e) => {
+  // 老板键别名：宿主快捷键在 iframe 里收不到，Alt+Q 在面板内直接藏帖
+  if (e.altKey && (e.key === 'q' || e.key === 'Q')) { e.preventDefault(); toggleBoss(); return; }
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
+  // 带 Ctrl/Cmd/Alt 的组合键一律不碰，留给宿主和浏览器
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
   if (e.key === 'b' || e.key === 'B') { toggleBoss(); return; }
   if (e.key === 'j' || e.key === 'k') {
     if (!topics.length) return;

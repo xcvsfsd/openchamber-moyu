@@ -198,52 +198,74 @@ const v2exThread = async (id: string, page: number, proxy?: string | null): Prom
   return { topic, opening, posts, page, more: false };
 };
 
-// ---- 热榜聚合（tophub.today 榜页 + InfoQ 官网，均为服务端直出 HTML） ----
-// 条目只有标题/链接/热度：Topic.author 借放热度文案，channel 放子榜名。
-const TOPHUB_BOARDS: Record<string, { hash: string; sub: string }> = {
-  zhihu: { hash: 'mproPpoq6O', sub: '热榜' },
-  csdn: { hash: 'n3moBVoN5O', sub: '热点' },
-};
-const HOT_IDS = ['zhihu', 'toutiao', 'csdn', 'oschina', 'infoq'] as const;
-
+// ---- 热榜聚合（各站官方口，均为服务端直出；掘金走 JSON API） ----
+// 条目只有标题/链接/热度：Topic.author 借放热度文案，channel 放子榜名，excerpt 放摘要。
 const stripTags = (s: string): string =>
   s.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/&#(\d+);/g, (_, n: string) => String.fromCharCode(Number(n))).trim();
 
-const tophubList = async (community: CommunityId, proxy?: string | null): Promise<Topic[]> => {
-  const board = TOPHUB_BOARDS[community];
-  if (!board) throw new Error('没有这个热榜');
-  let r;
+// 掘金热门：公开推荐 API（POST，需带 client_type）
+const h2post = async (url: string, payload: unknown, proxy?: string | null): Promise<unknown> => {
+  await pace();
+  const ctrl = new AbortController();
+  const h = await h2get(url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy, method: 'POST', body: JSON.stringify(payload) });
+  if (h.status !== 200) throw new Error(`掘金返回了 ${h.status}`);
+  try { return JSON.parse(h.body.toString('utf8')); } catch { throw new Error('掘金返回的内容读不懂'); }
+};
+type JuejinItem = { item_info?: { article_id?: unknown; article_info?: { article_id?: unknown; title?: unknown; brief_content?: unknown; ctime?: unknown; comment_count?: unknown }; author_user_info?: { user_name?: unknown } } };
+const juejinList = async (proxy?: string | null): Promise<Topic[]> => {
+  let data: unknown;
   try {
-    r = await timedFetch(`https://tophub.today/n/${board.hash}`, proxy);
+    data = await h2post('https://api.juejin.cn/recommend_api/v1/article/recommend_all_feed', { id_type: 2, client_type: 2608, sort_type: 3, limit: 30 }, proxy);
   } catch {
-    throw new Error('tophub 暂时连不上（对侧限流/拦截），过几分钟按 R 再试；V2EX / linux.do / InfoQ / 头条 / 开源中国可用');
+    throw new Error('掘金暂时连不上过一会儿再试');
   }
-  if (r.status !== 200) throw new Error(`热榜返回了 ${r.status}（对侧限流时过几分钟按 R 再试）`);
-  const body = await r.text();
-  const rows = body.match(/<tr>[\s\S]*?<\/tr>/g) ?? [];
-  const out: Topic[] = [];
-  for (const row of rows) {
-    const link = /<a\s+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(row);
-    if (!link) continue;
-    const href = link[1]!;
-    if (/^https?:\/\/(www\.)?tophub\.today\//i.test(href)) continue;
-    const title = stripTags(link[2] ?? '').slice(0, 200);
-    if (!title) continue;
-    const heat = stripTags(
-      /<td class="ws">(.*?)<\/td>/i.exec(row)?.[1]
-      ?? /<span class="e">(.*?)<\/span>/.exec(row)?.[1]
-      ?? '',
-    );
-    out.push({
-      community, id: String(out.length + 1), title, author: heat, avatar: null,
-      channel: board.sub, replies: null, time: null, url: href,
-    });
-    if (out.length >= 100) break;
+  const items = (data as { err_no?: unknown; data?: unknown }).data;
+  if (!Array.isArray(items) || items.length === 0) throw new Error('掘金返回的内容读不懂');
+  return (items as JuejinItem[]).slice(0, 30).map((it): Topic | null => {
+    const ai = it.item_info?.article_info ?? {};
+    const id = String(ai.article_id ?? it.item_info?.article_id ?? '');
+    if (!id || typeof ai.title !== 'string') return null;
+    const ctime = typeof ai.ctime === 'string' || typeof ai.ctime === 'number' ? Number(ai.ctime) : NaN;
+    return {
+      community: 'juejin' as const, id, title: ai.title.slice(0, 200),
+      author: typeof it.item_info?.author_user_info?.user_name === 'string' ? it.item_info.author_user_info.user_name : '',
+      avatar: null, channel: '热门',
+      replies: typeof ai.comment_count === 'number' ? ai.comment_count : null,
+      time: Number.isFinite(ctime) && ctime > 0 ? ctime * (ctime < 1e12 ? 1000 : 1) : null,
+      url: `https://juejin.cn/post/${id}`,
+      excerpt: typeof ai.brief_content === 'string' ? ai.brief_content.slice(0, 220) : '',
+    };
+  }).filter((t): t is Topic => !!t && !!t.title);
+};
+
+// IT之家资讯：m 站公开列表 API（description 即摘要）
+const ithomeList = async (proxy?: string | null): Promise<Topic[]> => {
+  let data: unknown;
+  try {
+    const r = await timedFetch('https://m.ithome.com/api/news/newslistpageget?TagIds=0&page=1', proxy);
+    if (r.status !== 200) throw new Error(`IT之家返回了 ${r.status}`);
+    data = await r.json();
+  } catch (e) {
+    if (e instanceof Error && /IT之家返回/.test(e.message)) throw e;
+    throw new Error('IT之家暂时连不上过一会儿再试');
   }
-  if (out.length === 0) throw new Error('热榜返回的内容读不懂');
-  return out;
+  const items = (data as { Result?: unknown }).Result;
+  if (!Array.isArray(items) || items.length === 0) throw new Error('IT之家返回的内容读不懂');
+  return items.slice(0, 30).map((it): Topic | null => {
+    const o = it as Record<string, unknown>;
+    if (typeof o.title !== 'string') return null;
+    const u = typeof o.url === 'string' ? o.url : '';
+    const t = typeof o.postdate === 'string' ? Date.parse(o.postdate) : NaN;
+    return {
+      community: 'ithome' as const, id: String(typeof o.newsid === 'number' ? o.newsid : o.newsid ?? ''),
+      title: (o.title as string).slice(0, 200), author: '', avatar: null, channel: '资讯',
+      replies: null, time: Number.isNaN(t) ? null : t,
+      url: u.startsWith('http') ? u : `https://www.ithome.com${u}`,
+      excerpt: typeof o.description === 'string' ? o.description.slice(0, 220) : '',
+    };
+  }).filter((t): t is Topic => !!t && !!t.title && !!t.url);
 };
 
 const infoqList = async (proxy?: string | null): Promise<Topic[]> => {
@@ -329,8 +351,36 @@ const oschinaList = async (proxy?: string | null): Promise<Topic[]> => {
   }).filter((t) => t.title);
 };
 
+// Solidot：官方 RSS（服务端直出，摘要即正文），走 HTTP/1.1
+const solidotList = async (proxy?: string | null): Promise<Topic[]> => {
+  await pace();
+  const ctrl = new AbortController();
+  let raw: string;
+  try {
+    const h = await h1get('https://www.solidot.org/index.rss', ctrl.signal, { timeoutMs: 30000, proxy });
+    if (h.status !== 200) throw new Error(`Solidot 返回了 ${h.status}`);
+    raw = h.body.toString('utf8');
+  } catch (e) {
+    if (e instanceof Error && /Solidot 返回/.test(e.message)) throw e;
+    throw new Error('Solidot 暂时连不上，过一会儿再试');
+  }
+  const items = parseRss(raw);
+  if (items.length === 0) throw new Error('Solidot 返回的内容读不懂');
+  return items.slice(0, 30).map((item, i) => {
+    const link = (item.link ?? '').trim();
+    const m = /[?&]sid=(\d+)/.exec(link);
+    return {
+      community: 'solidot' as const, id: m?.[1] ?? String(i + 1),
+      title: (item.title ?? '').slice(0, 200), author: '', avatar: null, channel: '资讯',
+      replies: null, time: millis(typeof item.pubDate === 'string' ? item.pubDate : null),
+      url: link || 'https://www.solidot.org/',
+      excerpt: oscExcerpt(typeof item.description === 'string' ? item.description : ''),
+    };
+  }).filter((t) => t.title);
+};
+
 // 热榜正文=原文链接卡（无评论）：从 3 分钟列表缓存里按序号取，缓存未命中就现拉
-// tophub 两榜（知乎/CSDN）与头条原文页均有反爬（验证/403/纯 JS 壳），只给转跳卡。
+// 头条原文页是纯 JS 壳，只给转跳卡。
 const hotThread = async (community: CommunityId, id: string, proxy?: string | null): Promise<Thread> => {
   if (!/^\d{1,12}$/.test(id)) throw new Error('请求的参数不对（id）');
   const topics = (await cachedList(community, 'hot', proxy)).topics;
@@ -345,6 +395,72 @@ const hotThread = async (community: CommunityId, id: string, proxy?: string | nu
   return { topic: t, opening, posts: [], page: 1, more: false };
 };
 
+// 掘金正文=全文 markdown（转纯文本块）+ 原文链接
+const juejinThread = async (id: string, proxy?: string | null): Promise<Thread> => {
+  if (!/^\d{1,20}$/.test(id)) throw new Error('请求的参数不对（id）');
+  const topics = (await cachedList('juejin', 'hot', proxy)).topics;
+  const t = topics.find((x) => x.id === id);
+  if (!t) throw new Error('帖子不存在');
+  const safeUrl = t.url.replace(/&/g, '&amp;');
+  let data: unknown;
+  try {
+    data = await h2post('https://api.juejin.cn/content_api/v1/article/detail', { article_id: id, client_type: 2608 }, proxy);
+  } catch {
+    throw new Error('掘金正文连不上，稍后按 R 重试，或点下方链接去浏览器看');
+  }
+  const mc = (data as { data?: { article_info?: { mark_content?: unknown } } }).data?.article_info?.mark_content;
+  const body = typeof mc === 'string' && mc.trim()
+    ? `<pre>${escHtml(mc.slice(0, 20000))}</pre><p><a href="${safeUrl}">在浏览器中查看原文</a></p>`
+    : (t.excerpt ? `<p>${escHtml(t.excerpt)}</p>` : '') + `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  const opening: Post = {
+    floor: 0, author: t.author, avatar: null, html: body,
+    time: t.time, replyTo: null, likes: null, byAuthor: true,
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+
+// IT之家正文直抽：文章页服务端直出，<div id="paragraph"> 即正文体
+const ithomeThread = async (id: string, proxy?: string | null): Promise<Thread> => {
+  const topics = (await cachedList('ithome', 'hot', proxy)).topics;
+  const t = topics.find((x) => x.id === id);
+  if (!t) throw new Error('帖子不存在');
+  const safeUrl = t.url.replace(/&/g, '&amp;');
+  const linkCard = `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  await pace();
+  const ctrl = new AbortController();
+  let raw: string;
+  try {
+    const h = await h1get(t.url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
+    if (h.status !== 200) throw new Error(`IT之家返回了 ${h.status}`);
+    raw = h.body.toString('utf8');
+  } catch (e) {
+    if (e instanceof Error && /IT之家返回/.test(e.message)) throw e;
+    throw new Error('IT之家正文连不上，稍后点↻重试或去浏览器看');
+  }
+  const body = raw;
+  const anchor = body.indexOf('id="paragraph"');
+  if (anchor < 0) {
+    const opening: Post = {
+      floor: 0, author: '', avatar: null,
+      html: (t.excerpt ? `<p>${escHtml(t.excerpt)}</p>` : '') + linkCard,
+      time: t.time, replyTo: null, likes: null, byAuthor: true,
+    };
+    return { topic: t, opening, posts: [], page: 1, more: false };
+  }
+  const start = Math.max(0, body.lastIndexOf('<div', anchor));
+  let k = start, depth = 0;
+  while (k < body.length && k >= 0) {
+    if (body.startsWith('<div', k)) { depth++; k = body.indexOf('>', k) + 1; if (k === 0) break; }
+    else if (body.startsWith('</div>', k)) { depth--; k += 6; if (depth === 0) break; }
+    else k++;
+  }
+  const inner = absLinks(body.slice(start, k), 'https://www.ithome.com');
+  const opening: Post = {
+    floor: 0, author: '', avatar: null, html: `${inner}${linkCard}`,
+    time: t.time, replyTo: null, likes: null, byAuthor: true,
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
 // 开源中国正文=RSS 摘要 + 原文链接（详情页是 JS 壳，摘要即正文）
 const escHtml = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -363,6 +479,21 @@ const oschinaThread = async (id: string, proxy?: string | null): Promise<Thread>
   return { topic: t, opening, posts: [], page: 1, more: false };
 };
 
+// Solidot 正文=RSS 全文/摘要 + 原文链接
+const solidotThread = async (id: string, proxy?: string | null): Promise<Thread> => {
+  const topics = (await cachedList('solidot', 'hot', proxy)).topics;
+  const t = topics.find((x) => x.id === id);
+  if (!t) throw new Error('帖子不存在');
+  const safeUrl = t.url.replace(/&/g, '&amp;');
+  const sbody = t.excerpt
+    ? `<p>${escHtml(t.excerpt)}</p><p><a href="${safeUrl}">在浏览器中查看原文</a></p>`
+    : `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  const sopening: Post = {
+    floor: 0, author: '', avatar: null, html: sbody,
+    time: t.time, replyTo: null, likes: null, byAuthor: true,
+  };
+  return { topic: t, opening: sopening, posts: [], page: 1, more: false };
+};
 // InfoQ 正文直抽：文章页 Nuxt SSR，<div class="ProseMirror"> 即正文体
 const infoqThread = async (id: string, proxy?: string | null): Promise<Thread> => {
   if (!/^\d{1,12}$/.test(id)) throw new Error('请求的参数不对（id）');
@@ -476,9 +607,11 @@ const cachedList = async (community: CommunityId, channel: string, proxy?: strin
 
 const fetchList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<Topic[]> => {
   if (community === 'toutiao') return toutiaoList(proxy);
+  if (community === 'juejin') return juejinList(proxy);
+  if (community === 'ithome') return ithomeList(proxy);
   if (community === 'oschina') return oschinaList(proxy);
+  if (community === 'solidot') return solidotList(proxy);
   if (community === 'infoq') return infoqList(proxy);
-  if (community === 'zhihu' || community === 'csdn') return tophubList(community, proxy);
   if (community === 'linuxdo') return linuxdoList(channel, proxy);
   if (community === 'v2ex') return v2exList(channel, proxy);
   throw new Error('bad-community');
@@ -532,7 +665,10 @@ const server = http.createServer((req, res) => {
     (async () => {
       if (community === 'infoq') return infoqThread(id, px);
       if (community === 'oschina') return oschinaThread(id, px);
-      if ((HOT_IDS as readonly string[]).includes(community)) return hotThread(community, id, px);
+      if (community === 'solidot') return solidotThread(id, px);
+      if (community === 'juejin') return juejinThread(id, px);
+      if (community === 'ithome') return ithomeThread(id, px);
+      if (community === 'toutiao') return hotThread(community, id, px);
       return community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     })().then(
       (thread) => json(res, 200, { ok: true, thread }),

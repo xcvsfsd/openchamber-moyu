@@ -116,7 +116,7 @@ const plainHeaders = (headers: IncomingHttpHeaders): Record<string, string> => {
   return out;
 };
 
-export type H2Options = { timeoutMs?: number; proxy?: string | null; maxBytes?: number };
+export type H2Options = { timeoutMs?: number; proxy?: string | null; maxBytes?: number; method?: string; body?: string; contentType?: string };
 export const h2get = async (url: string, signal: AbortSignal, options: H2Options = {}): Promise<HttpResponse> => {
   const target = new URL(url);
   const stop = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS)]);
@@ -147,7 +147,14 @@ export const h2get = async (url: string, signal: AbortSignal, options: H2Options
     stop.addEventListener('abort', onAbort);
     session = carrier ? connect(target.origin, { createConnection: () => carrier }) : connect(target.origin);
     session.on('error', () => end(new Error('网络错误')));
-    const stream = session.request({ ':method': 'GET', ':path': target.pathname + target.search, 'user-agent': UA, accept: '*/*' }, { endStream: true });
+    const reqHeaders: Record<string, string> = { ':method': options.method ?? 'GET', ':path': target.pathname + target.search, 'user-agent': UA, accept: '*/*' };
+    const hasBody = options.body !== undefined;
+    if (hasBody) {
+      reqHeaders['content-type'] = options.contentType ?? 'application/json';
+      reqHeaders['content-length'] = String(Buffer.byteLength(options.body!));
+    }
+    const stream = session.request(reqHeaders, { endStream: !hasBody });
+    if (hasBody) stream.end(options.body);
     let status = 0;
     let headers: Record<string, string> = {};
     const chunks: Buffer[] = [];

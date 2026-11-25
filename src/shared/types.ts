@@ -1,8 +1,7 @@
-// moyu 原生契约的 OpenChamber 移植：一个形状走两个论坛 + 热榜聚合。
-// 对应 antumi-moyu src/community.ts（去 zod，面板/service 共用，保持字段名一致）。
-// 热榜（知乎/头条/CSDN/开源中国经 tophub.today，InfoQ 经官网）只有列表：
-// 每条=一个 Topic（author 借放热度，channel 放子榜名），正文=原文链接卡。
-export type CommunityId = 'linuxdo' | 'v2ex' | 'zhihu' | 'toutiao' | 'csdn' | 'oschina' | 'infoq';
+// moyu 原生契约的 OpenChamber 移植：一个形状走论坛 + 热榜聚合。
+// 热榜只有列表：Topic.author 借放热度文案，channel 放子榜名，excerpt 放摘要；
+// 有正文的源（InfoQ/IT之家/掘金全文，oschina/Solidot 摘要）正文=原文内容卡。
+export type CommunityId = 'linuxdo' | 'v2ex' | 'toutiao' | 'juejin' | 'ithome' | 'oschina' | 'solidot' | 'infoq';
 export type Channel = { id: string; name: string };
 export type CommunityInfo = { id: CommunityId; name: string; channels: Channel[] };
 export type Topic = {
@@ -51,9 +50,10 @@ export const COMMUNITIES: CommunityInfo[] = [
       { id: 'jobs', name: '酷工作' },
     ],
   },
-  { id: 'zhihu', name: '知乎', channels: [{ id: 'hot', name: '热榜' }] },
   { id: 'toutiao', name: '今日头条', channels: [{ id: 'hot', name: '热榜' }] },
-  { id: 'csdn', name: 'CSDN', channels: [{ id: 'hot', name: '热点' }] },
+  { id: 'juejin', name: '掘金', channels: [{ id: 'hot', name: '热门' }] },
+  { id: 'ithome', name: 'IT之家', channels: [{ id: 'hot', name: '资讯' }] },
   { id: 'oschina', name: '开源中国', channels: [{ id: 'hot', name: '资讯' }] },
+  { id: 'solidot', name: 'Solidot', channels: [{ id: 'hot', name: '资讯' }] },
   { id: 'infoq', name: 'InfoQ', channels: [{ id: 'hot', name: '推荐' }] },
 ];

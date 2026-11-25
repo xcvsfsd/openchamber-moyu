@@ -20,14 +20,12 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 // 无可抓正文的源：✦ 先联网搜索再总结（标题版兜底）
-const TITLE_ONLY: readonly string[] = ['zhihu', 'toutiao', 'csdn'];
+const TITLE_ONLY: readonly string[] = ['toutiao'];
 // AI 分类候选（固定集合，避免碎片化）
 const CATS = ['AI科技', '数码', '互联网', '财经', '时政', '社会', '娱乐', '体育', '汽车', '房产', '教育', '健康', '科学', '游戏', '其他'];
 const LIST_TTL = 3 * 60 * 1000;
 const PER_PAIR = 12; // 每个社区频道最多取几条（19 个榜单，控制总量）
 const CAT_BATCH = 25; // 一次分类几条标题
-
-type Item = Topic & { src: string };
 
 const host = connectHost();
 const root = document.querySelector<HTMLElement>('#app');
@@ -67,7 +65,7 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
 </style>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
-  <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="msg2"></div><div id="catchips"></div><div id="topics"></div>
+  <div class="sec">话题 <span id="tcount" class="mut"></span> <button class="btn" id="b-refresh" title="手动刷新">↻</button></div><div id="msg2"></div><div id="catchips"></div><div id="topics"></div>
   <div class="sec">配置</div>
   <div id="cfgside">
     <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
@@ -75,7 +73,7 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
     <button class="btn primary" id="b-save">保存并测试</button>
     <div class="mut" id="cfg-out"></div>
   </div>
-  <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span><br>R 刷新</div>
+  <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
 </aside>
 </div>`;
 
@@ -84,12 +82,12 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.9.0-fused';
+const BUILD = 'v0.10.0-more';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
 let proxy = '';
-let topics: Item[] = [];
+let topics: Topic[] = [];
 let failed: string[] = [];
 let listAt = 0;
 let busy = false;
@@ -115,8 +113,7 @@ const svc = async (method: string, path: string, body?: string): Promise<{ statu
   return host.serviceRequest({ method: method as 'GET' | 'POST', path: p, body });
 };
 
-const srcName = (c: { name: string }, ch: { name: string }, multi: boolean): string =>
-  multi ? `${c.name}·${ch.name}` : c.name;
+const srcName = (_c: { name: string }, _ch: { name: string }, _multi: boolean): string => '';
 
 const paintChips = (cats: string[]): void => {
   chipsEl.innerHTML = '';
@@ -142,8 +139,9 @@ const paintList = (): void => {
   const present = [...new Set(topics.map((t) => catMem.get(ckey(t))).filter((c): c is string => !!c))];
   const ordered = CATS.filter((c) => present.includes(c));
   paintChips(ordered);
+  const tstr = listAt > 0 ? (() => { const d = new Date(listAt); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; })() : '';
   const fail = failed.length > 0 ? ` · ${failed.join('、')}暂不可用` : '';
-  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}${fail}` : fail.replace(/^ · /, '');
+  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}${tstr ? ` · 更新 ${tstr}` : ''}${fail}` : fail.replace(/^ · /, '');
   topicsEl.innerHTML = '';
   const groups = selCat ? [selCat] : ordered.length > 0 ? ordered : [''];
   for (const g of groups) {
@@ -158,7 +156,7 @@ const paintList = (): void => {
       const d = document.createElement('div');
       d.className = 'nrow';
       const xcp = t.excerpt ? `<br><span class="xp">${esc(t.excerpt)}</span>` : '';
-      d.innerHTML = `<span class="tt">${esc(t.title)}<br><span class="src">${esc(t.src)}</span>${xcp}</span>`;
+      d.innerHTML = `<span class="tt">${esc(t.title)}${xcp}</span>`;
       const b = document.createElement('button');
       b.className = 'aibtn';
       b.title = 'AI 总结这篇';
@@ -321,8 +319,7 @@ const pollAll = async (force = false): Promise<void> => {
         const j = JSON.parse(r.body) as { ok: boolean; topics?: Topic[]; error?: string };
         if (!j.ok) throw new Error(j.error ?? '列表失败');
         if (run !== feedRun) return;
-        const items: Item[] = (j.topics ?? []).slice(0, PER_PAIR)
-          .map((t) => ({ ...t, src: srcName(c, ch, c.channels.length > 1) }));
+        const items: Topic[] = (j.topics ?? []).slice(0, PER_PAIR);
         topics.push(...items);
         if (run !== feedRun) return;
         ($('tcount') as HTMLElement).textContent = `加载中 ${topics.length} · 已回 ${pairs.length - failed.length}/${pairs.length}`;
@@ -334,12 +331,21 @@ const pollAll = async (force = false): Promise<void> => {
     }));
     if (run !== feedRun) return;
     listAt = Date.now();
-    say(failed.length > 0 ? esc(`${failed.join('、')}暂不可用（多为对侧限流过一会儿按 R 再试）`) : '');
+    // 按标题去重（跨源同一事件只留一条）
+    const seen = new Set<string>();
+    topics = topics.filter((t) => {
+      const k = t.title.replace(/[\s\p{P}]+/gu, '').toLowerCase();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    say(failed.length > 0 ? esc(`${failed.join('、')}暂不可用（多为对侧限流过一会儿点↻再试）`) : '');
     paintList();
     void classifyAll(run);
   } finally { busy = false; }
 };
 
+$('b-refresh').onclick = () => { listAt = 0; void pollAll(true); };
 $('b-save').onclick = async () => {
   const v = (document.querySelector('#cfg-proxy') as HTMLInputElement).value.trim();
   if (v && !/^https?:\/\/.+/.test(v)) { $('cfg-out').textContent = '格式不对，要 http(s)://host:port'; return; }
@@ -364,8 +370,6 @@ let escCount = 0;
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { escCount++; if (escCount >= 2) { escCount = 0; void host.close(); } setTimeout(() => (escCount = 0), 500); }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollAll(false); });
-
 const loadPrefs = async (): Promise<void> => {
   proxy = (await storeGet('moyu:proxy') as string | undefined) ?? '';
   (document.querySelector('#cfg-proxy') as HTMLInputElement).value = proxy;
@@ -373,4 +377,3 @@ const loadPrefs = async (): Promise<void> => {
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 void loadPrefs().then(() => void pollAll(true));
-setInterval(() => void pollAll(false), 60_000);

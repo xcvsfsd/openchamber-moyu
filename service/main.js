@@ -29,10 +29,11 @@ var COMMUNITIES = [
       { id: "jobs", name: "酷工作" }
     ]
   },
-  { id: "zhihu", name: "知乎", channels: [{ id: "hot", name: "热榜" }] },
   { id: "toutiao", name: "今日头条", channels: [{ id: "hot", name: "热榜" }] },
-  { id: "csdn", name: "CSDN", channels: [{ id: "hot", name: "热点" }] },
+  { id: "juejin", name: "掘金", channels: [{ id: "hot", name: "热门" }] },
+  { id: "ithome", name: "IT之家", channels: [{ id: "hot", name: "资讯" }] },
   { id: "oschina", name: "开源中国", channels: [{ id: "hot", name: "资讯" }] },
+  { id: "solidot", name: "Solidot", channels: [{ id: "hot", name: "资讯" }] },
   { id: "infoq", name: "InfoQ", channels: [{ id: "hot", name: "推荐" }] }
 ];
 
@@ -245,7 +246,15 @@ var h2get = async (url, signal, options = {}) => {
     stop.addEventListener("abort", onAbort);
     session = carrier ? connect(target.origin, { createConnection: () => carrier }) : connect(target.origin);
     session.on("error", () => end(new Error("网络错误")));
-    const stream = session.request({ ":method": "GET", ":path": target.pathname + target.search, "user-agent": UA, accept: "*/*" }, { endStream: true });
+    const reqHeaders = { ":method": options.method ?? "GET", ":path": target.pathname + target.search, "user-agent": UA, accept: "*/*" };
+    const hasBody = options.body !== undefined;
+    if (hasBody) {
+      reqHeaders["content-type"] = options.contentType ?? "application/json";
+      reqHeaders["content-length"] = String(Buffer.byteLength(options.body));
+    }
+    const stream = session.request(reqHeaders, { endStream: !hasBody });
+    if (hasBody)
+      stream.end(options.body);
     let status = 0;
     let headers = {};
     const chunks = [];
@@ -675,55 +684,83 @@ var v2exThread = async (id, page, proxy) => {
   }));
   return { topic, opening, posts, page, more: false };
 };
-var TOPHUB_BOARDS = {
-  zhihu: { hash: "mproPpoq6O", sub: "热榜" },
-  csdn: { hash: "n3moBVoN5O", sub: "热点" }
-};
-var HOT_IDS = ["zhihu", "toutiao", "csdn", "oschina", "infoq"];
 var stripTags = (s) => s.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).trim();
-var tophubList = async (community, proxy) => {
-  const board = TOPHUB_BOARDS[community];
-  if (!board)
-    throw new Error("没有这个热榜");
-  let r;
+var h2post = async (url, payload, proxy) => {
+  await pace();
+  const ctrl = new AbortController;
+  const h = await h2get(url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy, method: "POST", body: JSON.stringify(payload) });
+  if (h.status !== 200)
+    throw new Error(`掘金返回了 ${h.status}`);
   try {
-    r = await timedFetch(`https://tophub.today/n/${board.hash}`, proxy);
+    return JSON.parse(h.body.toString("utf8"));
   } catch {
-    throw new Error("tophub 暂时连不上（对侧限流/拦截），过几分钟按 R 再试；V2EX / linux.do / InfoQ / 头条 / 开源中国可用");
+    throw new Error("掘金返回的内容读不懂");
   }
-  if (r.status !== 200)
-    throw new Error(`热榜返回了 ${r.status}（对侧限流时过几分钟按 R 再试）`);
-  const body = await r.text();
-  const rows = body.match(/<tr>[\s\S]*?<\/tr>/g) ?? [];
-  const out = [];
-  for (const row of rows) {
-    const link = /<a\s+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(row);
-    if (!link)
-      continue;
-    const href = link[1];
-    if (/^https?:\/\/(www\.)?tophub\.today\//i.test(href))
-      continue;
-    const title = stripTags(link[2] ?? "").slice(0, 200);
-    if (!title)
-      continue;
-    const heat = stripTags(/<td class="ws">(.*?)<\/td>/i.exec(row)?.[1] ?? /<span class="e">(.*?)<\/span>/.exec(row)?.[1] ?? "");
-    out.push({
-      community,
-      id: String(out.length + 1),
-      title,
-      author: heat,
+};
+var juejinList = async (proxy) => {
+  let data;
+  try {
+    data = await h2post("https://api.juejin.cn/recommend_api/v1/article/recommend_all_feed", { id_type: 2, client_type: 2608, sort_type: 3, limit: 30 }, proxy);
+  } catch {
+    throw new Error("掘金暂时连不上过一会儿再试");
+  }
+  const items = data.data;
+  if (!Array.isArray(items) || items.length === 0)
+    throw new Error("掘金返回的内容读不懂");
+  return items.slice(0, 30).map((it) => {
+    const ai = it.item_info?.article_info ?? {};
+    const id = String(ai.article_id ?? it.item_info?.article_id ?? "");
+    if (!id || typeof ai.title !== "string")
+      return null;
+    const ctime = typeof ai.ctime === "string" || typeof ai.ctime === "number" ? Number(ai.ctime) : NaN;
+    return {
+      community: "juejin",
+      id,
+      title: ai.title.slice(0, 200),
+      author: typeof it.item_info?.author_user_info?.user_name === "string" ? it.item_info.author_user_info.user_name : "",
       avatar: null,
-      channel: board.sub,
-      replies: null,
-      time: null,
-      url: href
-    });
-    if (out.length >= 100)
-      break;
+      channel: "热门",
+      replies: typeof ai.comment_count === "number" ? ai.comment_count : null,
+      time: Number.isFinite(ctime) && ctime > 0 ? ctime * (ctime < 1000000000000 ? 1000 : 1) : null,
+      url: `https://juejin.cn/post/${id}`,
+      excerpt: typeof ai.brief_content === "string" ? ai.brief_content.slice(0, 220) : ""
+    };
+  }).filter((t) => !!t && !!t.title);
+};
+var ithomeList = async (proxy) => {
+  let data;
+  try {
+    const r = await timedFetch("https://m.ithome.com/api/news/newslistpageget?TagIds=0&page=1", proxy);
+    if (r.status !== 200)
+      throw new Error(`IT之家返回了 ${r.status}`);
+    data = await r.json();
+  } catch (e) {
+    if (e instanceof Error && /IT之家返回/.test(e.message))
+      throw e;
+    throw new Error("IT之家暂时连不上过一会儿再试");
   }
-  if (out.length === 0)
-    throw new Error("热榜返回的内容读不懂");
-  return out;
+  const items = data.Result;
+  if (!Array.isArray(items) || items.length === 0)
+    throw new Error("IT之家返回的内容读不懂");
+  return items.slice(0, 30).map((it) => {
+    const o = it;
+    if (typeof o.title !== "string")
+      return null;
+    const u = typeof o.url === "string" ? o.url : "";
+    const t = typeof o.postdate === "string" ? Date.parse(o.postdate) : NaN;
+    return {
+      community: "ithome",
+      id: String(typeof o.newsid === "number" ? o.newsid : o.newsid ?? ""),
+      title: o.title.slice(0, 200),
+      author: "",
+      avatar: null,
+      channel: "资讯",
+      replies: null,
+      time: Number.isNaN(t) ? null : t,
+      url: u.startsWith("http") ? u : `https://www.ithome.com${u}`,
+      excerpt: typeof o.description === "string" ? o.description.slice(0, 220) : ""
+    };
+  }).filter((t) => !!t && !!t.title && !!t.url);
 };
 var infoqList = async (proxy) => {
   const r = await timedFetch("https://www.infoq.cn/", proxy);
@@ -829,6 +866,40 @@ var oschinaList = async (proxy) => {
     };
   }).filter((t) => t.title);
 };
+var solidotList = async (proxy) => {
+  await pace();
+  const ctrl = new AbortController;
+  let raw;
+  try {
+    const h = await h1get("https://www.solidot.org/index.rss", ctrl.signal, { timeoutMs: 30000, proxy });
+    if (h.status !== 200)
+      throw new Error(`Solidot 返回了 ${h.status}`);
+    raw = h.body.toString("utf8");
+  } catch (e) {
+    if (e instanceof Error && /Solidot 返回/.test(e.message))
+      throw e;
+    throw new Error("Solidot 暂时连不上，过一会儿再试");
+  }
+  const items = parseRss(raw);
+  if (items.length === 0)
+    throw new Error("Solidot 返回的内容读不懂");
+  return items.slice(0, 30).map((item, i) => {
+    const link = (item.link ?? "").trim();
+    const m = /[?&]sid=(\d+)/.exec(link);
+    return {
+      community: "solidot",
+      id: m?.[1] ?? String(i + 1),
+      title: (item.title ?? "").slice(0, 200),
+      author: "",
+      avatar: null,
+      channel: "资讯",
+      replies: null,
+      time: millis(typeof item.pubDate === "string" ? item.pubDate : null),
+      url: link || "https://www.solidot.org/",
+      excerpt: oscExcerpt(typeof item.description === "string" ? item.description : "")
+    };
+  }).filter((t) => t.title);
+};
 var hotThread = async (community, id, proxy) => {
   if (!/^\d{1,12}$/.test(id))
     throw new Error("请求的参数不对（id）");
@@ -843,6 +914,98 @@ var hotThread = async (community, id, proxy) => {
     avatar: null,
     html: `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`,
     time: null,
+    replyTo: null,
+    likes: null,
+    byAuthor: true
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+var juejinThread = async (id, proxy) => {
+  if (!/^\d{1,20}$/.test(id))
+    throw new Error("请求的参数不对（id）");
+  const topics = (await cachedList("juejin", "hot", proxy)).topics;
+  const t = topics.find((x) => x.id === id);
+  if (!t)
+    throw new Error("帖子不存在");
+  const safeUrl = t.url.replace(/&/g, "&amp;");
+  let data;
+  try {
+    data = await h2post("https://api.juejin.cn/content_api/v1/article/detail", { article_id: id, client_type: 2608 }, proxy);
+  } catch {
+    throw new Error("掘金正文连不上，稍后按 R 重试，或点下方链接去浏览器看");
+  }
+  const mc = data.data?.article_info?.mark_content;
+  const body = typeof mc === "string" && mc.trim() ? `<pre>${escHtml(mc.slice(0, 20000))}</pre><p><a href="${safeUrl}">在浏览器中查看原文</a></p>` : (t.excerpt ? `<p>${escHtml(t.excerpt)}</p>` : "") + `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  const opening = {
+    floor: 0,
+    author: t.author,
+    avatar: null,
+    html: body,
+    time: t.time,
+    replyTo: null,
+    likes: null,
+    byAuthor: true
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+var ithomeThread = async (id, proxy) => {
+  const topics = (await cachedList("ithome", "hot", proxy)).topics;
+  const t = topics.find((x) => x.id === id);
+  if (!t)
+    throw new Error("帖子不存在");
+  const safeUrl = t.url.replace(/&/g, "&amp;");
+  const linkCard = `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  await pace();
+  const ctrl = new AbortController;
+  let raw;
+  try {
+    const h = await h1get(t.url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
+    if (h.status !== 200)
+      throw new Error(`IT之家返回了 ${h.status}`);
+    raw = h.body.toString("utf8");
+  } catch (e) {
+    if (e instanceof Error && /IT之家返回/.test(e.message))
+      throw e;
+    throw new Error("IT之家正文连不上，稍后点↻重试或去浏览器看");
+  }
+  const body = raw;
+  const anchor = body.indexOf('id="paragraph"');
+  if (anchor < 0) {
+    const opening2 = {
+      floor: 0,
+      author: "",
+      avatar: null,
+      html: (t.excerpt ? `<p>${escHtml(t.excerpt)}</p>` : "") + linkCard,
+      time: t.time,
+      replyTo: null,
+      likes: null,
+      byAuthor: true
+    };
+    return { topic: t, opening: opening2, posts: [], page: 1, more: false };
+  }
+  const start = Math.max(0, body.lastIndexOf("<div", anchor));
+  let k = start, depth = 0;
+  while (k < body.length && k >= 0) {
+    if (body.startsWith("<div", k)) {
+      depth++;
+      k = body.indexOf(">", k) + 1;
+      if (k === 0)
+        break;
+    } else if (body.startsWith("</div>", k)) {
+      depth--;
+      k += 6;
+      if (depth === 0)
+        break;
+    } else
+      k++;
+  }
+  const inner = absLinks(body.slice(start, k), "https://www.ithome.com");
+  const opening = {
+    floor: 0,
+    author: "",
+    avatar: null,
+    html: `${inner}${linkCard}`,
+    time: t.time,
     replyTo: null,
     likes: null,
     byAuthor: true
@@ -868,6 +1031,25 @@ var oschinaThread = async (id, proxy) => {
     byAuthor: true
   };
   return { topic: t, opening, posts: [], page: 1, more: false };
+};
+var solidotThread = async (id, proxy) => {
+  const topics = (await cachedList("solidot", "hot", proxy)).topics;
+  const t = topics.find((x) => x.id === id);
+  if (!t)
+    throw new Error("帖子不存在");
+  const safeUrl = t.url.replace(/&/g, "&amp;");
+  const sbody = t.excerpt ? `<p>${escHtml(t.excerpt)}</p><p><a href="${safeUrl}">在浏览器中查看原文</a></p>` : `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  const sopening = {
+    floor: 0,
+    author: "",
+    avatar: null,
+    html: sbody,
+    time: t.time,
+    replyTo: null,
+    likes: null,
+    byAuthor: true
+  };
+  return { topic: t, opening: sopening, posts: [], page: 1, more: false };
 };
 var infoqThread = async (id, proxy) => {
   if (!/^\d{1,12}$/.test(id))
@@ -1011,12 +1193,16 @@ var cachedList = async (community, channel, proxy) => {
 var fetchList = async (community, channel, proxy) => {
   if (community === "toutiao")
     return toutiaoList(proxy);
+  if (community === "juejin")
+    return juejinList(proxy);
+  if (community === "ithome")
+    return ithomeList(proxy);
   if (community === "oschina")
     return oschinaList(proxy);
+  if (community === "solidot")
+    return solidotList(proxy);
   if (community === "infoq")
     return infoqList(proxy);
-  if (community === "zhihu" || community === "csdn")
-    return tophubList(community, proxy);
   if (community === "linuxdo")
     return linuxdoList(channel, proxy);
   if (community === "v2ex")
@@ -1079,7 +1265,13 @@ var server = http.createServer((req, res) => {
         return infoqThread(id, px);
       if (community === "oschina")
         return oschinaThread(id, px);
-      if (HOT_IDS.includes(community))
+      if (community === "solidot")
+        return solidotThread(id, px);
+      if (community === "juejin")
+        return juejinThread(id, px);
+      if (community === "ithome")
+        return ithomeThread(id, px);
+      if (community === "toutiao")
         return hotThread(community, id, px);
       return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     })().then((thread) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));

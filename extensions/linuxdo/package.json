@@ -17,7 +17,6 @@
         "icon": "assets/l.svg",
         "entry": "panel/index.html"
       },
-      "page": true,
       "origins": [
         "https://linux.do",
         "https://cdn.ldstatic.com",

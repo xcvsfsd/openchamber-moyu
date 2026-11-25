@@ -38,7 +38,7 @@ for (const t of targets) {
       apiVersion: 1, engines: { openchamber: '>=2.7.2' },
       contributes: {
         panel: { id: t.id, name: t.name, icon: t.icon, entry: 'panel/index.html' },
-        page: true,
+        // 无 page：只在右侧 rail 用，左侧边栏不再建入口
         // 远程头像/表情直连需要宿主放行（service 代理优先，直连兜底）
         origins: ['https://linux.do', 'https://cdn.ldstatic.com', 'https://www.v2ex.com', 'https://cdn.v2ex.com'],
         // sessions：在会话中打开话题（左侧原生聊天）

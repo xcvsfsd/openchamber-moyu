@@ -83,13 +83,14 @@ button:disabled{opacity:.5}
 .msg .body h1,.msg .body h2,.msg .body h3{font-size:1.05em;margin:12px 0 6px}
 .imgph{border:1px dashed var(--oc-border,#8888);border-radius:8px;padding:8px;font-size:12px;color:var(--oc-muted,#999);cursor:pointer}
 .mut{font-size:12px;color:var(--oc-muted,#999)}.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-/* 窄 rail：目录在上、正文在下堆叠，看正文时切 thread 视图 */
+/* 窄 rail：列表态只留目录（main 整个隐藏，无空白）；看正文切 thread 视图 */
 body[data-narrow="1"] #app{flex-direction:column}
-body[data-narrow="1"] aside{width:100%;max-width:none;max-height:42%;border-bottom:1px solid var(--oc-border,#8883);padding:6px;flex-shrink:0}
+body[data-narrow="1"] aside{width:100%;max-width:none;max-height:none;border-bottom:none;padding:6px;flex:1;min-height:0}
 body[data-narrow="1"] #chanrow{display:flex;overflow-x:auto;scrollbar-width:none}
 body[data-narrow="1"] #chanrow::-webkit-scrollbar{display:none}
 body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
 body[data-narrow="1"] main{border-left:none;min-height:0}
+body[data-narrow="1"][data-view="list"] main{display:none}
 body[data-narrow="1"][data-view="thread"] aside{display:none}
 body[data-narrow="1"] #b-back{display:inline-block}
 #b-back{display:none}
@@ -125,7 +126,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.6-railall';
+const BUILD = 'v0.3.7-railonly';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 

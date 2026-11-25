@@ -28,7 +28,7 @@ await writeFile(R(`${dir}/panel/index.html`), panelHtml);
 const manifest = {
   name: 'openchamber-moyu',
   version: JSON.parse(await readFile(R('package.json'), 'utf8')).version,
-  description: '摸鱼阅读：linux.do + V2EX，话题=会话的假聊天页（匿名可读）',
+  description: '摸鱼阅读：V2EX / linux.do / 知乎 / 头条 / CSDN / 开源中国 / InfoQ（tophub 聚合 + 官网直出）',
   private: true, type: 'module', license: 'Apache-2.0',
   openchamber: {
     apiVersion: 1, engines: { openchamber: '>=2.7.2' },
@@ -37,8 +37,6 @@ const manifest = {
       // 无 page：只在右侧 rail 用，左侧边栏不再建入口
       // 远程头像/表情直连需要宿主放行（service 代理优先，直连兜底）
       origins: ['https://linux.do', 'https://cdn.ldstatic.com', 'https://www.v2ex.com', 'https://cdn.v2ex.com'],
-      // sessions：在会话中打开话题（左侧原生聊天）
-      capabilities: ['sessions'],
       service: { entry: 'service/main.js', runtime: 'host' },
     },
   },

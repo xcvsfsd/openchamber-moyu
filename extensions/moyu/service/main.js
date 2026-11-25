@@ -28,7 +28,12 @@ var COMMUNITIES = [
       { id: "qna", name: "问与答" },
       { id: "jobs", name: "酷工作" }
     ]
-  }
+  },
+  { id: "zhihu", name: "知乎", channels: [{ id: "hot", name: "热榜" }] },
+  { id: "toutiao", name: "今日头条", channels: [{ id: "hot", name: "热榜" }] },
+  { id: "csdn", name: "CSDN", channels: [{ id: "hot", name: "热点" }] },
+  { id: "oschina", name: "开源中国", channels: [{ id: "hot", name: "资讯" }] },
+  { id: "infoq", name: "InfoQ", channels: [{ id: "hot", name: "推荐" }] }
 ];
 
 // src/shared/rss.ts
@@ -501,15 +506,129 @@ var v2exThread = async (id, page, proxy) => {
   }));
   return { topic, opening, posts, page, more: false };
 };
+var TOPHUB_BOARDS = {
+  zhihu: { hash: "mproPpoq6O", sub: "热榜" },
+  toutiao: { hash: "x9ozB4KoXb", sub: "头条热榜" },
+  csdn: { hash: "n3moBVoN5O", sub: "热点" },
+  oschina: { hash: "rYqoXZzdOD", sub: "热门资讯" }
+};
+var HOT_IDS = ["zhihu", "toutiao", "csdn", "oschina", "infoq"];
+var stripTags = (s) => s.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+var tophubList = async (community, proxy) => {
+  const board = TOPHUB_BOARDS[community];
+  if (!board)
+    throw new Error("没有这个热榜");
+  const r = await timedFetch(`https://tophub.today/n/${board.hash}`, proxy);
+  if (r.status !== 200)
+    throw new Error(`热榜返回了 ${r.status}`);
+  const body = await r.text();
+  const rows = body.match(/<tr>[\s\S]*?<\/tr>/g) ?? [];
+  const out = [];
+  for (const row of rows) {
+    const link = /<a\s+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(row);
+    if (!link)
+      continue;
+    const href = link[1];
+    if (/^https?:\/\/(www\.)?tophub\.today\//i.test(href))
+      continue;
+    const title = stripTags(link[2] ?? "").slice(0, 200);
+    if (!title)
+      continue;
+    const heat = stripTags(/<td class="ws">(.*?)<\/td>/i.exec(row)?.[1] ?? /<span class="e">(.*?)<\/span>/.exec(row)?.[1] ?? "");
+    out.push({
+      community,
+      id: String(out.length + 1),
+      title,
+      author: heat,
+      avatar: null,
+      channel: board.sub,
+      replies: null,
+      time: null,
+      url: href
+    });
+    if (out.length >= 100)
+      break;
+  }
+  if (out.length === 0)
+    throw new Error("热榜返回的内容读不懂");
+  return out;
+};
+var infoqList = async (proxy) => {
+  const r = await timedFetch("https://www.infoq.cn/", proxy);
+  if (r.status !== 200)
+    throw new Error(`InfoQ 返回了 ${r.status}`);
+  const body = await r.text();
+  const re = /<a[^>]*com-article-title[^>]*href="(https:\/\/www\.infoq\.cn\/article\/[^"]+)"[^>]*>[\s\S]*?<span[^>]*>([^<]{5,150})<\/span>/g;
+  const out = [];
+  const seen = new Set;
+  let m;
+  while (m = re.exec(body)) {
+    const href = m[1];
+    if (seen.has(href))
+      continue;
+    seen.add(href);
+    const title = stripTags(m[2] ?? "").slice(0, 200);
+    if (!title)
+      continue;
+    out.push({
+      community: "infoq",
+      id: String(out.length + 1),
+      title,
+      author: "",
+      avatar: null,
+      channel: "推荐",
+      replies: null,
+      time: null,
+      url: href
+    });
+    if (out.length >= 50)
+      break;
+  }
+  if (out.length === 0)
+    throw new Error("InfoQ 返回的内容读不懂");
+  return out;
+};
+var hotThread = async (community, id, proxy) => {
+  if (!/^\d{1,12}$/.test(id))
+    throw new Error("请求的参数不对（id）");
+  const topics = (await cachedList(community, "hot", proxy)).topics;
+  const t = topics[Number(id) - 1];
+  if (!t)
+    throw new Error("帖子不存在");
+  const safeUrl = t.url.replace(/&/g, "&amp;");
+  const opening = {
+    floor: 0,
+    author: "",
+    avatar: null,
+    html: `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`,
+    time: null,
+    replyTo: null,
+    likes: null,
+    byAuthor: true
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
 var listCache = new Map;
 var cachedList = async (community, channel, proxy) => {
   const key = `${community}/${channel}/${proxy ?? ""}`;
   const hit = listCache.get(key);
   if (hit && Date.now() - hit.at < LIST_CACHE_TTL_MS)
     return { topics: hit.topics, cached: true };
-  const topics = community === "linuxdo" ? await linuxdoList(channel, proxy) : await v2exList(channel, proxy);
+  const topics = await fetchList(community, channel, proxy);
   listCache.set(key, { at: Date.now(), topics });
   return { topics, cached: false };
+};
+var fetchList = async (community, channel, proxy) => {
+  if (HOT_IDS.includes(community)) {
+    if (community === "infoq")
+      return infoqList(proxy);
+    return tophubList(community, proxy);
+  }
+  if (community === "linuxdo")
+    return linuxdoList(channel, proxy);
+  if (community === "v2ex")
+    return v2exList(channel, proxy);
+  throw new Error("bad-community");
 };
 var proxyOf = (req, url) => {
   const header = req.headers["x-proxy"];
@@ -551,7 +670,7 @@ var server = http.createServer((req, res) => {
   if (req.method === "GET" && url.pathname === "/list") {
     const community = url.searchParams.get("community");
     const channel = url.searchParams.get("channel") ?? "";
-    if (community !== "linuxdo" && community !== "v2ex")
+    if (!COMMUNITIES.some((c) => c.id === community))
       return json(res, 400, { ok: false, error: "bad-community" });
     const px = proxyOf(req, url) ?? undefined;
     cachedList(community, channel, px).then(({ topics, cached }) => json(res, 200, { ok: true, topics, cached }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
@@ -562,7 +681,11 @@ var server = http.createServer((req, res) => {
     const id = url.searchParams.get("id") ?? "";
     const page = Math.max(1, Number(url.searchParams.get("page") ?? "1") || 1);
     const px = proxyOf(req, url) ?? undefined;
-    (async () => community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px))().then((thread) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
+    (async () => {
+      if (HOT_IDS.includes(community))
+        return hotThread(community, id, px);
+      return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
+    })().then((thread) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
     return;
   }
   if (req.method === "GET" && url.pathname === "/image") {

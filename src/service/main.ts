@@ -198,15 +198,108 @@ const v2exThread = async (id: string, page: number, proxy?: string | null): Prom
   return { topic, opening, posts, page, more: false };
 };
 
+// ---- 热榜聚合（tophub.today 榜页 + InfoQ 官网，均为服务端直出 HTML） ----
+// 条目只有标题/链接/热度：Topic.author 借放热度文案，channel 放子榜名。
+const TOPHUB_BOARDS: Record<string, { hash: string; sub: string }> = {
+  zhihu: { hash: 'mproPpoq6O', sub: '热榜' },
+  toutiao: { hash: 'x9ozB4KoXb', sub: '头条热榜' },
+  csdn: { hash: 'n3moBVoN5O', sub: '热点' },
+  oschina: { hash: 'rYqoXZzdOD', sub: '热门资讯' },
+};
+const HOT_IDS = ['zhihu', 'toutiao', 'csdn', 'oschina', 'infoq'] as const;
+
+const stripTags = (s: string): string =>
+  s.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+
+const tophubList = async (community: CommunityId, proxy?: string | null): Promise<Topic[]> => {
+  const board = TOPHUB_BOARDS[community];
+  if (!board) throw new Error('没有这个热榜');
+  const r = await timedFetch(`https://tophub.today/n/${board.hash}`, proxy);
+  if (r.status !== 200) throw new Error(`热榜返回了 ${r.status}`);
+  const body = await r.text();
+  const rows = body.match(/<tr>[\s\S]*?<\/tr>/g) ?? [];
+  const out: Topic[] = [];
+  for (const row of rows) {
+    const link = /<a\s+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(row);
+    if (!link) continue;
+    const href = link[1]!;
+    if (/^https?:\/\/(www\.)?tophub\.today\//i.test(href)) continue;
+    const title = stripTags(link[2] ?? '').slice(0, 200);
+    if (!title) continue;
+    const heat = stripTags(
+      /<td class="ws">(.*?)<\/td>/i.exec(row)?.[1]
+      ?? /<span class="e">(.*?)<\/span>/.exec(row)?.[1]
+      ?? '',
+    );
+    out.push({
+      community, id: String(out.length + 1), title, author: heat, avatar: null,
+      channel: board.sub, replies: null, time: null, url: href,
+    });
+    if (out.length >= 100) break;
+  }
+  if (out.length === 0) throw new Error('热榜返回的内容读不懂');
+  return out;
+};
+
+const infoqList = async (proxy?: string | null): Promise<Topic[]> => {
+  const r = await timedFetch('https://www.infoq.cn/', proxy);
+  if (r.status !== 200) throw new Error(`InfoQ 返回了 ${r.status}`);
+  const body = await r.text();
+  const re = /<a[^>]*com-article-title[^>]*href="(https:\/\/www\.infoq\.cn\/article\/[^"]+)"[^>]*>[\s\S]*?<span[^>]*>([^<]{5,150})<\/span>/g;
+  const out: Topic[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) {
+    const href = m[1]!;
+    if (seen.has(href)) continue;
+    seen.add(href);
+    const title = stripTags(m[2] ?? '').slice(0, 200);
+    if (!title) continue;
+    out.push({
+      community: 'infoq', id: String(out.length + 1), title, author: '', avatar: null,
+      channel: '推荐', replies: null, time: null, url: href,
+    });
+    if (out.length >= 50) break;
+  }
+  if (out.length === 0) throw new Error('InfoQ 返回的内容读不懂');
+  return out;
+};
+
+// 热榜正文=原文链接卡（无评论）：从 3 分钟列表缓存里按序号取，缓存未命中就现拉
+const hotThread = async (community: CommunityId, id: string, proxy?: string | null): Promise<Thread> => {
+  if (!/^\d{1,12}$/.test(id)) throw new Error('请求的参数不对（id）');
+  const topics = (await cachedList(community, 'hot', proxy)).topics;
+  const t = topics[Number(id) - 1];
+  if (!t) throw new Error('帖子不存在');
+  const safeUrl = t.url.replace(/&/g, '&amp;');
+  const opening: Post = {
+    floor: 0, author: '', avatar: null,
+    html: `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`,
+    time: null, replyTo: null, likes: null, byAuthor: true,
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+
 // ---- 缓存（列表 3 分钟，到期页面可见时再刷） ----
 const listCache = new Map<string, { at: number; topics: Topic[] }>();
 const cachedList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<{ topics: Topic[]; cached: boolean }> => {
   const key = `${community}/${channel}/${proxy ?? ''}`;
   const hit = listCache.get(key);
   if (hit && Date.now() - hit.at < LIST_CACHE_TTL_MS) return { topics: hit.topics, cached: true };
-  const topics = community === 'linuxdo' ? await linuxdoList(channel, proxy) : await v2exList(channel, proxy);
+  const topics = await fetchList(community, channel, proxy);
   listCache.set(key, { at: Date.now(), topics });
   return { topics, cached: false };
+};
+
+const fetchList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<Topic[]> => {
+  if ((HOT_IDS as readonly string[]).includes(community)) {
+    if (community === 'infoq') return infoqList(proxy);
+    return tophubList(community, proxy);
+  }
+  if (community === 'linuxdo') return linuxdoList(channel, proxy);
+  if (community === 'v2ex') return v2exList(channel, proxy);
+  throw new Error('bad-community');
 };
 
 const proxyOf = (req: http.IncomingMessage, url: URL): string | null | undefined => {
@@ -241,7 +334,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/list') {
     const community = url.searchParams.get('community') as CommunityId;
     const channel = url.searchParams.get('channel') ?? '';
-    if (community !== 'linuxdo' && community !== 'v2ex') return json(res, 400, { ok: false, error: 'bad-community' });
+    if (!COMMUNITIES.some((c) => c.id === community)) return json(res, 400, { ok: false, error: 'bad-community' });
     const px = proxyOf(req, url) ?? undefined;
     cachedList(community, channel, px).then(
       ({ topics, cached }) => json(res, 200, { ok: true, topics, cached }),
@@ -254,7 +347,10 @@ const server = http.createServer((req, res) => {
     const id = url.searchParams.get('id') ?? '';
     const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
     const px = proxyOf(req, url) ?? undefined;
-    (async () => community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px))().then(
+    (async () => {
+      if ((HOT_IDS as readonly string[]).includes(community)) return hotThread(community, id, px);
+      return community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
+    })().then(
       (thread) => json(res, 200, { ok: true, thread }),
       (e) => json(res, 200, { ok: false, error: netError(e).message }),
     );

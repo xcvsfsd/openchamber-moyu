@@ -42,8 +42,6 @@ button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.active{background:var(--oc-hover,#8882)}
 .nrow .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:13.5px}
 .nrow .mm{font-size:12px;color:var(--oc-muted,#999);white-space:nowrap}
-.nrow .go{flex:0 0 auto;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 8px;white-space:nowrap}
-.nrow .go:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 .nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1}
 .nrow.chan .dot{color:var(--oc-muted,#999)}
 body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
@@ -128,7 +126,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.4.0-merged';
+const BUILD = 'v0.4.0-hot';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -182,7 +180,7 @@ const svc = async (method: string, path: string, body?: string): Promise<{ statu
 
 const loadPrefs = async (): Promise<void> => {
   const savedC = (await storeGet('moyu:community') as CommunityId | undefined) ?? 'v2ex';
-  if (savedC === 'linuxdo' || savedC === 'v2ex') community = savedC;
+  if (COMMUNITIES.some((c) => c.id === savedC)) community = savedC;
   const v = await storeGet(`moyu:prefs:${community}`) as Prefs | undefined;
   if (v && typeof v.stream === 'boolean') prefs = v;
   proxy = (await storeGet('moyu:proxy') as string | undefined) ?? '';
@@ -245,58 +243,20 @@ const paintList = (): void => {
   paintChannels();
   ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}` : '';
   topicsEl.innerHTML = '';
-  for (const t of topics) {    const d = document.createElement('div');
+  for (const t of topics) {
+    const d = document.createElement('div');
     d.className = 'nrow' + (current?.id === t.id ? ' active' : '');
-    d.innerHTML = `<span class="tt">${esc(t.title)}<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${esc(t.author)}${t.channel ? ` · ${esc(t.channel)}` : ''} · ${t.replies ?? '-'}回复 · ${rel(t.time)}</span></span>`;
-    const go = document.createElement('button');
-    go.className = 'go';
-    go.title = '在会话中打开（进左侧聊天）';
-    go.textContent = '💬';
-    go.onclick = (e) => { e.stopPropagation(); void openInSession(t, go); };
-    d.appendChild(go);
+    const parts: string[] = [];
+    if (t.author) parts.push(esc(t.author));
+    if (t.channel) parts.push(esc(t.channel));
+    if (t.replies !== null) parts.push(`${t.replies}回复`);
+    if (t.time) parts.push(rel(t.time));
+    d.innerHTML = `<span class="tt">${esc(t.title)}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
     d.onclick = () => void openTopic(t);
     topicsEl.appendChild(d);
   }
-  const crumb = $('topic-crumb');
-  crumb.textContent = current ? `/ ${current.title.slice(0, 24)}` : '';
-};
-
-// 在会话中打开：话题变成左侧原生聊天，正文进上下文，可直接跟模型聊（moyu 隐喻落地）
-const textOf = (html: string): string =>
-  (html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n').replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"')
-    .split('\n').map((l) => l.trim()).filter(Boolean).join('\n')).slice(0, 1200);
-
-const openInSession = async (t: Topic, btn: HTMLButtonElement): Promise<void> => {
-  btn.disabled = true;
-  const old = btn.textContent;
-  btn.textContent = '…';
-  try {
-    let th: Thread | null = current?.id === t.id ? thread : null;
-    if (!th) {
-      const r = await svc('GET', `/thread?community=${community}&id=${encodeURIComponent(t.id)}&page=1`);
-      const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
-      if (!j.ok || !j.thread) { say(esc(j.error ?? '正文失败')); return; }
-      th = j.thread;
-    }
-    const lines = [`# ${t.title}`, '', `原文：${t.url}`, ''];
-    if (th.opening) { lines.push(`楼主 ${th.opening.author}：`, textOf(th.opening.html), ''); }
-    const posts = th.posts.slice(-12);
-    for (const p of posts) lines.push(`#${p.floor} ${p.author}：`, textOf(p.html), '');
-    const digest = lines.join('\n').slice(0, 15000);
-    await host.startSession({
-      providerId: `moyu-${community}`, id: t.id, title: t.title, url: t.url, text: digest,
-      navigation: 'open',
-    });
-    await host.toast({ kind: 'success', message: '已在左侧会话中打开' });
-  } catch (e) {
-    const code = (e as { code?: string })?.code;
-    const hint = code === 'NOT_GRANTED' ? '（sessions 能力没批准：重装/更新时勾上）' : '';
-    say(esc(`打开会话失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}${hint}`));
-  } finally {
-    btn.disabled = false;
-    btn.textContent = old;
-  }
+  const crumb = document.querySelector('#topic-crumb');
+  if (crumb) crumb.textContent = current ? `/ ${current.title.slice(0, 24)}` : '';
 };
 
 const clean = (html: string): string =>
@@ -343,12 +303,25 @@ const msgCard = (mine: boolean, author: string, time: number | null, html: strin
   mine ? `<div class="msg mine"><div class="bubble"><div class="body">${proxyImg(html)}</div></div></div>`
     : `<div class="msg theirs"><div class="bubble"><div class="body">${proxyImg(html)}</div></div><div class="meta">${[esc(author), rel(time), ...tags].filter(Boolean).join('<span class="sep">·</span>')}</div></div>`;
 
+// 帖内链接走宿主浏览器打开（sandbox 里点不开，统一经 openUrl）
+threadEl.addEventListener('click', (e) => {
+  const a = (e.target as HTMLElement).closest?.('a') as HTMLAnchorElement | null;
+  if (!a?.href) return;
+  e.preventDefault();
+  void host.openUrl(a.href);
+});
+
 const paintThread = async (animate: boolean): Promise<void> => {
   threadEl.innerHTML = '';
   if (!thread) { paintThreadPlaceholder(); return; }
   // 原生“活动行”：帖子上下文（作者·频道·回复数·时间）
   const t = thread.topic;
-  const act = `<div class="act"><span>帖子</span><span class="sep">›</span><span>${esc(t.author)}${t.channel ? ` · ${esc(t.channel)}` : ''} · ${t.replies ?? '-'}回复 · ${rel(t.time)}</span></div>`;
+  const actParts: string[] = [];
+  if (t.author) actParts.push(esc(t.author));
+  if (t.channel) actParts.push(esc(t.channel));
+  if (t.replies !== null) actParts.push(`${t.replies}回复`);
+  if (t.time) actParts.push(rel(t.time));
+  const act = `<div class="act"><span>帖子</span><span class="sep">›</span><span>${actParts.join(' · ')}</span></div>`;
   const cards: string[] = [act];
   if (thread.opening) cards.push(msgCard(true, thread.opening.author, thread.opening.time, thread.opening.html, []));
   thread.posts.forEach((p) => {

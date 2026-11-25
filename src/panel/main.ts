@@ -83,11 +83,19 @@ button:disabled{opacity:.5}
 .msg .body h1,.msg .body h2,.msg .body h3{font-size:1.05em;margin:12px 0 6px}
 .imgph{border:1px dashed var(--oc-border,#8888);border-radius:8px;padding:8px;font-size:12px;color:var(--oc-muted,#999);cursor:pointer}
 .mut{font-size:12px;color:var(--oc-muted,#999)}.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-/* 窄 = 导航器：只留目录（频道+话题+配置），正文去中间页看 */
-body[data-narrow="1"] aside{width:100%;max-width:none;max-height:none;border-bottom:none}
-body[data-narrow="1"] main{display:none}
-/* 宽 = 阅读器：只留正文，目录去 rail 选 */
-body:not([data-narrow="1"]) aside{display:none}
+/* 窄 rail：目录在上、正文在下堆叠，看正文时切 thread 视图 */
+body[data-narrow="1"] #app{flex-direction:column}
+body[data-narrow="1"] aside{width:100%;max-width:none;max-height:42%;border-bottom:1px solid var(--oc-border,#8883);padding:6px;flex-shrink:0}
+body[data-narrow="1"] #chanrow{display:flex;overflow-x:auto;scrollbar-width:none}
+body[data-narrow="1"] #chanrow::-webkit-scrollbar{display:none}
+body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
+body[data-narrow="1"] main{border-left:none;min-height:0}
+body[data-narrow="1"][data-view="thread"] aside{display:none}
+body[data-narrow="1"] #b-back{display:inline-block}
+#b-back{display:none}
+#threadbar{display:none;padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);align-items:center;gap:8px}
+body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
+#threadbar .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--oc-muted,#999);font-size:12px}
 
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
@@ -107,6 +115,7 @@ body:not([data-narrow="1"]) aside{display:none}
   <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
 </aside>
 <main>
+  <div id="threadbar"><button class="btn" id="b-back" title="返回列表">‹</button><span class="tt" id="topic-crumb"></span></div>
   <div id="msg"></div>
   <div id="thread"></div>
 </main>
@@ -116,7 +125,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.5-nolink';
+const BUILD = 'v0.3.6-railall';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -215,6 +224,8 @@ const paintList = (): void => {
     d.onclick = () => void openTopic(t);
     topicsEl.appendChild(d);
   }
+  const crumb = $('topic-crumb');
+  crumb.textContent = current ? `/ ${current.title.slice(0, 24)}` : '';
 };
 
 // 在会话中打开：话题变成左侧原生聊天，正文进上下文，可直接跟模型聊（moyu 隐喻落地）
@@ -346,8 +357,8 @@ const pollList = async (force = false): Promise<void> => {
     topics = j.topics ?? [];
     listAt = Date.now();
     paintList();
-    // 宽页首次加载自动打开第一帖（rail 那边只导航不自动开）
-    if (!isNarrow() && !current && topics.length > 0) { void openTopic(topics[0]!); return; }
+    // 进来即有内容：首次加载自动打开第一帖
+    if (!current && topics.length > 0) { void openTopic(topics[0]!); return; }
   } catch (e) {
     const code = (e as { code?: string })?.code;
     const hint = code === 'NO_SERVICE' ? '（service 没起来：去 设置→扩展 看阅读卡片上的 service 错误）'
@@ -358,43 +369,9 @@ const pollList = async (force = false): Promise<void> => {
 };
 
 const openTopic = async (t: Topic): Promise<void> => {
-  // 窄 rail = 纯导航：只把 id 递给中间页，自己不加载正文
-  if (isNarrow()) {
-    await storeSet(`moyu:open:${COMMUNITY}`, { id: t.id });
-    await host.toast({ kind: 'info', message: '已送往阅读页，打开「阅读 V」查看' });
-    current = t; paintList();
-    return;
-  }
   current = t; thread = null; paintList();
+  if (isNarrow()) document.body.dataset.view = 'thread';
   await openPage(1, true);
-};
-
-// 中间页按 id 直读（rail 递过来的），列表里没有也照读
-const openById = async (id: string): Promise<void> => {
-  try {
-    const r = await svc('GET', `/thread?community=${COMMUNITY}&id=${encodeURIComponent(id)}&page=1`);
-    const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
-    if (!j.ok || !j.thread) { say(esc(j.error ?? '正文失败')); return; }
-    say('');
-    current = j.thread.topic; thread = j.thread;
-    paintList();
-    await paintThread(true);
-  } catch (e) {
-    const code = (e as { code?: string })?.code;
-    say(esc(`正文失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}`));
-  }
-};
-
-// rail → page 接力：有待读 id 就打开并清除
-const checkPending = async (): Promise<void> => {
-  if (isNarrow()) return;
-  const p = await storeGet(`moyu:open:${COMMUNITY}`) as { id?: string } | undefined;
-  if (!p?.id || p.id === current?.id) return;
-  await storeSet(`moyu:open:${COMMUNITY}`, null);
-  if (document.hidden) return;
-  const known = topics.find((t) => t.id === p.id);
-  if (known) await openTopic(known);
-  else await openById(p.id);
 };
 
 const openPage = async (page: number, animate: boolean): Promise<void> => {
@@ -446,10 +423,11 @@ let escCount = 0;
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { escCount++; if (escCount >= 2) { escCount = 0; void host.close(); } setTimeout(() => (escCount = 0), 500); }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { void checkPending(); void pollList(false); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 paintThreadPlaceholder();
+$('b-back').onclick = () => { document.body.dataset.view = 'list'; };
 // 窄 rail 只做导航器（main 隐藏），宽页只做阅读器（aside 隐藏）
 const fitNarrow = (): void => {
   const w = document.documentElement.clientWidth;
@@ -458,5 +436,5 @@ const fitNarrow = (): void => {
 };
 new ResizeObserver(() => fitNarrow()).observe(document.documentElement);
 fitNarrow();
-void loadPrefs().then(() => { paintChannels(); void checkPending(); void pollList(true); });
-setInterval(() => { void checkPending(); void pollList(false); }, 15_000);
+void loadPrefs().then(() => { paintChannels(); void pollList(true); });
+setInterval(() => void pollList(false), 60_000);

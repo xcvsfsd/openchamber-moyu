@@ -82,7 +82,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.10.0-more';
+const BUILD = 'v0.10.1-catprog';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -96,6 +96,9 @@ let feedRun = 0;
 const catMem = new Map<string, string>();
 let catsOff = false;
 let selCat = '';
+let catDone = 0;
+let catTotal = 0;
+let catRunning = false;
 
 const say = (html: string): void => {
   const m2 = document.querySelector('#msg2');
@@ -141,7 +144,8 @@ const paintList = (): void => {
   paintChips(ordered);
   const tstr = listAt > 0 ? (() => { const d = new Date(listAt); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; })() : '';
   const fail = failed.length > 0 ? ` · ${failed.join('、')}暂不可用` : '';
-  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}${tstr ? ` · 更新 ${tstr}` : ''}${fail}` : fail.replace(/^ · /, '');
+  const cprog = catRunning ? ` · 分类 ${catDone}/${catTotal}` : '';
+  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}${tstr ? ` · 更新 ${tstr}` : ''}${cprog}${fail}` : fail.replace(/^ · /, '');
   topicsEl.innerHTML = '';
   const groups = selCat ? [selCat] : ordered.length > 0 ? ordered : [''];
   for (const g of groups) {
@@ -172,6 +176,11 @@ const paintList = (): void => {
 const classifyAll = async (run: number): Promise<void> => {
   if (catsOff) return;
   const pending = topics.filter((t) => !catMem.has(ckey(t)));
+  catTotal = pending.length;
+  catDone = 0;
+  catRunning = pending.length > 0;
+  paintList();
+  if (pending.length === 0) return;
   for (let i = 0; i < pending.length; i += CAT_BATCH) {
     if (run !== feedRun) return;
     const batch = pending.slice(i, i + CAT_BATCH);
@@ -204,7 +213,9 @@ const classifyAll = async (run: number): Promise<void> => {
         const code = (e as { code?: string })?.code;
         if (code === 'NO_MODEL' || code === 'MODEL_FAILED') {
           catsOff = true;
+          catRunning = false;
           say(esc(code === 'NO_MODEL' ? '无可用小模型，AI 分类关闭（列表照常）' : '小模型出错，AI 分类暂停（列表照常）'));
+          paintList();
           return;
         }
         // 单批失败：全标其他，不重试
@@ -214,8 +225,10 @@ const classifyAll = async (run: number): Promise<void> => {
       batch.forEach((t, j) => catMem.set(ckey(t), hits[j]!));
     }
     if (run !== feedRun) return;
+    catDone = Math.min(pending.length, i + CAT_BATCH);
     paintList();
   }
+  if (run === feedRun) { catRunning = false; paintList(); }
 };
 
 // 按需 AI 总结：点 ✦ 拉正文（走 service），用小模型总结后展开在行内；结果按话题缓存。

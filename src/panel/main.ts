@@ -56,15 +56,16 @@ button:disabled{opacity:.5}
 #msg:empty{display:none}
 #msg{padding:0 12px}#msg .err{margin-top:8px}
 .err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
-#thread{flex:1;overflow-y:auto;padding:18px 20px 48px;display:flex;flex-direction:column;gap:18px;max-width:1120px;width:100%;margin:0 auto}
+#thread{flex:1;overflow-y:auto;padding:18px 20px 48px;display:flex;flex-direction:column;gap:20px;max-width:1120px;width:100%;margin:0 auto}
 .act{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--oc-muted,#999)}
 .act .sep{opacity:.6}
 .msg{display:flex;flex-direction:column;gap:2px;max-width:100%}
-.msg .bubble{border-radius:12px;padding:9px 14px;word-break:break-word;line-height:1.7;font-size:14px}
+.msg .bubble{border-radius:12px;padding:10px 16px;word-break:break-word;line-height:1.7;font-size:14px}
 .msg.mine{align-items:flex-end}
 .msg.mine .bubble{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);max-width:80%}
 .msg.theirs .bubble{padding:2px;max-width:100%}
 .msg .meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--oc-muted,#999);margin-top:5px}
+.msg .meta .sep{opacity:.6}
 .msg .meta .op{font-size:11px;border:1px solid var(--oc-border,#8888);border-radius:999px;padding:0 7px}
 .msg .body{word-break:break-word;line-height:1.7;font-size:14px}
 .msg .body p{margin:0 0 10px}.msg .body p:last-child{margin-bottom:0}
@@ -115,7 +116,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.3-readonly';
+const BUILD = 'v0.3.4-meta11';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -294,9 +295,9 @@ const hydrateImages = async (scope: HTMLElement): Promise<void> => {
   }
 };
 
-const msgCard = (mine: boolean, author: string, time: number | null, html: string, tags: string): string =>
+const msgCard = (mine: boolean, author: string, time: number | null, html: string, tags: string[]): string =>
   mine ? `<div class="msg mine"><div class="bubble"><div class="body">${proxyImg(html)}</div></div></div>`
-    : `<div class="msg theirs"><div class="bubble"><div class="body">${proxyImg(html)}</div></div><div class="meta"><span>${esc(author)}</span><span>${rel(time)}</span>${tags}</div></div>`;
+    : `<div class="msg theirs"><div class="bubble"><div class="body">${proxyImg(html)}</div></div><div class="meta">${[esc(author), rel(time), ...tags].filter(Boolean).join('<span class="sep">·</span>')}</div></div>`;
 
 const paintThread = async (animate: boolean): Promise<void> => {
   threadEl.innerHTML = '';
@@ -305,9 +306,9 @@ const paintThread = async (animate: boolean): Promise<void> => {
   const t = thread.topic;
   const act = `<div class="act"><span>帖子</span><span class="sep">›</span><span>${esc(t.author)}${t.channel ? ` · ${esc(t.channel)}` : ''} · ${t.replies ?? '-'}回复 · ${rel(t.time)}</span></div>`;
   const cards: string[] = [act];
-  if (thread.opening) cards.push(msgCard(true, thread.opening.author, thread.opening.time, thread.opening.html, ''));
+  if (thread.opening) cards.push(msgCard(true, thread.opening.author, thread.opening.time, thread.opening.html, []));
   thread.posts.forEach((p) => {
-    const tags = `${p.byAuthor ? '<span class="op">楼主</span>' : ''}<span>#${p.floor}</span>${p.replyTo ? `<span>回复 #${p.replyTo}</span>` : ''}${p.likes !== null ? `<span>❤${p.likes}</span>` : ''}`;
+    const tags = [`<span class="op">楼主</span>`, `#${p.floor}`, p.replyTo ? `回复 #${p.replyTo}` : '', p.likes !== null ? `❤${p.likes}` : ''].filter((s, i) => i === 0 ? p.byAuthor : Boolean(s));
     cards.push(msgCard(false, p.author, p.time, p.html, tags));
   });
   if (!prefs.stream || !animate) {

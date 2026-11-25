@@ -83,7 +83,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics');
 
-const BUILD = 'v0.8.0-list';
+const BUILD = 'v0.8.1-cstatus';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -92,6 +92,8 @@ let channel = info().channels[0]!.id;
 let topics: Topic[] = [];
 let listAt = 0;
 let busy = false;
+// 社区可用性：列表拉失败就标 ⚠（tooltip 见错因），成功即摘掉；只记访问过的
+const commErr = new Map<CommunityId, string>();
 
 const say = (html: string): void => {
   const m2 = document.querySelector('#msg2');
@@ -132,7 +134,9 @@ const paintCommunities = (): void => {
   for (const c of COMMUNITIES) {
     const b = document.createElement('button');
     b.className = 'nrow chan' + (community === c.id ? ' active' : '');
-    b.innerHTML = `<span class="dot">●</span><span class="tt">${esc(c.name)}</span>`;
+    const bad = commErr.get(c.id);
+    const mark = bad ? ` <span class="ext" title="${esc(bad)}">⚠</span>` : '';
+    b.innerHTML = `<span class="dot">●</span><span class="tt">${esc(c.name)}${mark}</span>`;
     b.onclick = () => { if (community !== c.id) void switchCommunity(c.id); };
     box.appendChild(b);
   }
@@ -272,8 +276,15 @@ const pollList = async (force = false): Promise<void> => {
   try {
     const r = await svc('GET', `/list?community=${community}&channel=${encodeURIComponent(channel)}`);
     const j = JSON.parse(r.body) as { ok: boolean; topics?: Topic[]; error?: string };
-    if (!j.ok) { say(esc(j.error ?? '列表失败')); return; }
+    if (!j.ok) {
+      const msg = j.error ?? '列表失败';
+      commErr.set(community, msg);
+      paintCommunities();
+      say(esc(msg));
+      return;
+    }
     say('');
+    commErr.delete(community);
     topics = j.topics ?? [];
     listAt = Date.now();
     paintList();
@@ -281,7 +292,10 @@ const pollList = async (force = false): Promise<void> => {
     const code = (e as { code?: string })?.code;
     const hint = code === 'NO_SERVICE' ? '（service 没起来：去 设置→扩展 看阅读卡片上的 service 错误）'
       : code === 'NOT_GRANTED' ? '（service 能力没批准：重装时勾上）' : '';
-    say(esc(`列表失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}${hint}`));
+    const msg = `列表失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}${hint}`;
+    commErr.set(community, msg);
+    paintCommunities();
+    say(esc(msg));
     return;
   } finally { busy = false; }
 };

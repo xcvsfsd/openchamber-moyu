@@ -33,7 +33,9 @@ root.innerHTML = `
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;font:14px/1.6 var(--oc-font,system-ui,sans-serif);background:var(--oc-bg,#1b1e22);color:var(--oc-fg,inherit)}
-#app{display:flex;height:100vh;overflow:hidden;background:var(--oc-bg,#1b1e22);color:var(--oc-fg,inherit)}
+#app{display:flex;height:100vh;overflow:hidden;background:var(--oc-bg,#1b1e22);color:var(--oc-fg,inherit);position:relative}
+#menu{position:absolute;top:46px;right:10px;z-index:30;background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);border-radius:12px;padding:6px;min-width:210px;box-shadow:0 8px 24px #000a}
+#menu .nrow{padding:8px 10px}
 /* 左：原生侧栏 */
 aside{width:300px;min-width:250px;max-width:340px;display:flex;flex-direction:column;padding:10px 8px;gap:2px;overflow-y:auto}
 .sec{font-size:12px;color:var(--oc-muted,#999);padding:8px 10px 4px}
@@ -92,15 +94,18 @@ body[data-narrow="1"] .hd::-webkit-scrollbar{display:none}
 <header class="hd">
   <button class="btn" id="b-back" title="返回列表">‹</button>
   <span class="crumb" id="cname"></span>
-  <span class="mut" id="build"></span>
   <span class="mut" id="topic-crumb"></span>
   <span style="flex:1"></span>
-  <button class="btn" id="b-refresh" title="刷新列表 (r)">↻</button>
-  <button class="btn" id="b-open" title="浏览器打开 (o)">↗</button>
-  <button class="btn" id="b-cfg" title="代理/连接设置">⚙</button>
-  <button class="btn" id="b-bell" title="通知">🔔</button>
-  <button class="btn" id="b-login">登录</button>
+  <button class="btn" id="b-more" title="更多操作">⋯</button>
 </header>
+<div id="menu" style="display:none">
+  <button class="nrow" id="b-refresh"><span class="tt">↻ 刷新列表</span><span class="mm">R</span></button>
+  <button class="nrow" id="b-open"><span class="tt">↗ 浏览器打开</span><span class="mm">O</span></button>
+  <button class="nrow" id="b-cfg"><span class="tt">⚙ 代理设置</span></button>
+  <button class="nrow" id="b-bell"><span class="tt">🔔 通知</span></button>
+  <button class="nrow" id="b-login"><span class="tt">👤 登录</span></button>
+  <div class="mut" style="padding:6px 10px 2px" id="build"></div>
+</div>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
   <div class="sec">频道</div><div id="chanrow"><div id="channels"></div></div>
@@ -135,7 +140,7 @@ const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 const draftEl = $('draft') as unknown as HTMLTextAreaElement;
 const hintEl = $('hint'), posEl = $('pos');
 
-const BUILD = 'v0.2.1-chat';
+const BUILD = 'v0.2.2-menu';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -358,6 +363,19 @@ const openPage = async (page: number, animate: boolean): Promise<void> => {
   }
 };
 
+const closeMenu = (): void => { ($('menu') as HTMLElement).style.display = 'none'; };
+$('b-more').onclick = (e) => {
+  e.stopPropagation();
+  const m = $('menu') as HTMLElement;
+  m.style.display = m.style.display !== 'none' ? 'none' : 'block';
+};
+($('menu') as HTMLElement).addEventListener('click', (e) => {
+  if ((e.target as HTMLElement).closest('button')) closeMenu();
+});
+document.addEventListener('click', (e) => {
+  const m = $('menu') as HTMLElement;
+  if (m.style.display !== 'none' && !(e.target as HTMLElement).closest('#menu') && !(e.target as HTMLElement).closest('#b-more')) closeMenu();
+});
 $('b-refresh').onclick = () => void pollList(true);
 $('b-open').onclick = () => { if (current) void host.openUrl(current.url); };
 $('b-login').onclick = async () => {
@@ -428,7 +446,11 @@ document.addEventListener('keydown', (e) => {
 });
 let escCount = 0;
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { escCount++; if (escCount >= 2) { escCount = 0; void host.close(); } setTimeout(() => (escCount = 0), 500); }
+  if (e.key === 'Escape') {
+    const m = $('menu') as HTMLElement;
+    if (m.style.display !== 'none') { closeMenu(); escCount = 0; return; }
+    escCount++; if (escCount >= 2) { escCount = 0; void host.close(); } setTimeout(() => (escCount = 0), 500);
+  }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
 

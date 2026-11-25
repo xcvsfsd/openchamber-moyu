@@ -66,6 +66,7 @@ body[data-narrow="1"] .hd::-webkit-scrollbar{display:none}
 </style>
 <header class="hd" style="width:100%">
   <strong id="cname"></strong>
+  <span class="mut" id="build"></span>
   <button id="b-back" title="返回列表">‹</button>
   <select id="ch"></select>
   <button id="b-refresh" title="刷新列表 (r)">↻</button>
@@ -104,7 +105,9 @@ const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 const draftEl = $('draft') as unknown as HTMLTextAreaElement;
 const hintEl = $('hint'), posEl = $('pos');
 
+const BUILD = 'v0.1.2-narrow';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
+(document.querySelector('#build') as HTMLElement).textContent = BUILD;
 for (const c of INFO.channels) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; chSel.appendChild(o); }
 
 type Prefs = { stream: boolean; images: boolean; mask: boolean };

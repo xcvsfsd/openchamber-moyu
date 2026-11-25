@@ -34,8 +34,6 @@ root.innerHTML = `
 html,body{height:100%}
 body{margin:0;font:14px/1.6 var(--oc-font,system-ui,sans-serif);background:var(--oc-bg,#1b1e22);color:var(--oc-fg,inherit)}
 #app{display:flex;height:100vh;overflow:hidden;background:var(--oc-bg,#1b1e22);color:var(--oc-fg,inherit);position:relative}
-#menu{position:absolute;top:46px;right:10px;z-index:30;background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);border-radius:12px;padding:6px;min-width:210px;box-shadow:0 8px 24px #000a}
-#menu .nrow{padding:8px 10px}
 /* 左：原生侧栏 */
 aside{width:300px;min-width:250px;max-width:340px;display:flex;flex-direction:column;padding:10px 8px;gap:2px;overflow-y:auto}
 .sec{font-size:12px;color:var(--oc-muted,#999);padding:8px 10px 4px}
@@ -48,7 +46,6 @@ button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.chan .dot{color:var(--oc-muted,#999)}
 /* 中：原生聊天列 */
 main{flex:1;display:flex;flex-direction:column;min-width:0;border-left:1px solid var(--oc-border,#8883)}
-.hd{padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--oc-bg,#1b1e22)}
 .hd .crumb{font-weight:700}
 button,select,input,textarea{font:inherit}
 .btn{padding:4px 10px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:var(--oc-fg,inherit);cursor:pointer;white-space:nowrap}
@@ -80,7 +77,7 @@ button:disabled{opacity:.5}
 .sw.on{border-color:var(--oc-primary,#3574f0);color:var(--oc-primary-text,var(--oc-primary,#3574f0));font-weight:700}
 /* 窄 rail：频道横滑 + 列表/正文切换 */
 body[data-narrow="1"] #app{flex-direction:column}
-body[data-narrow="1"] aside{width:100%;max-width:none;max-height:38%;border-bottom:1px solid var(--oc-border,#8883);padding:6px}
+body[data-narrow="1"] aside{width:100%;max-width:none;max-height:44%;border-bottom:1px solid var(--oc-border,#8883);padding:6px}
 body[data-narrow="1"] #chanrow{display:flex;overflow-x:auto;scrollbar-width:none}
 body[data-narrow="1"] #chanrow::-webkit-scrollbar{display:none}
 body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
@@ -88,36 +85,29 @@ body[data-narrow="1"] main{border-left:none;min-height:0}
 body[data-narrow="1"][data-view="thread"] aside{display:none}
 body[data-narrow="1"] #b-back{display:inline-block}
 #b-back{display:none}
-body[data-narrow="1"] .hd{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
-body[data-narrow="1"] .hd::-webkit-scrollbar{display:none}
+#threadbar{display:none;padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);align-items:center;gap:8px}
+body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
+#threadbar .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--oc-muted,#999);font-size:12px}
+#cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
+#cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
+#cfgver{padding:2px 10px 6px;font-size:11px}
 </style>
-<header class="hd">
-  <button class="btn" id="b-back" title="返回列表">‹</button>
-  <span class="crumb" id="cname"></span>
-  <span class="mut" id="topic-crumb"></span>
-  <span style="flex:1"></span>
-  <button class="btn" id="b-more" title="更多操作">⋯</button>
-</header>
-<div id="menu" style="display:none">
-  <button class="nrow" id="b-refresh"><span class="tt">↻ 刷新列表</span><span class="mm">R</span></button>
-  <button class="nrow" id="b-open"><span class="tt">↗ 浏览器打开</span><span class="mm">O</span></button>
-  <button class="nrow" id="b-cfg"><span class="tt">⚙ 代理设置</span></button>
-  <button class="nrow" id="b-bell"><span class="tt">🔔 通知</span></button>
-  <button class="nrow" id="b-login"><span class="tt">👤 登录</span></button>
-  <div class="mut" style="padding:6px 10px 2px" id="build"></div>
-</div>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
   <div class="sec">频道</div><div id="chanrow"><div id="channels"></div></div>
   <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="topics"></div>
+  <div class="sec">配置</div>
+  <div id="cfgside">
+    <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
+    <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" />
+    <button class="btn primary" id="b-save">保存并测试</button>
+    <div class="mut" id="cfg-out"></div>
+  </div>
+  <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
 </aside>
 <main>
+  <div id="threadbar"><button class="btn" id="b-back" title="返回列表">‹</button><span class="tt" id="topic-crumb"></span></div>
   <div id="msg"></div>
-<div id="cfg" style="display:none;border:1px dashed var(--oc-border,#8888);border-radius:10px;padding:10px 12px;margin:8px 12px 0;flex-direction:column;gap:6px">
-  <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填，和系统代理一致，如 http://127.0.0.1:7897）。只存本机，不上传。</div>
-  <div class="row"><input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" style="flex:1" /><button class="btn primary" id="b-save">保存并测试</button></div>
-  <div class="mut" id="cfg-out"></div>
-</div>
   <div id="thread"></div>
   <div id="composer">
    <div class="box">
@@ -140,7 +130,7 @@ const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 const draftEl = $('draft') as unknown as HTMLTextAreaElement;
 const hintEl = $('hint'), posEl = $('pos');
 
-const BUILD = 'v0.2.2-menu';
+const BUILD = 'v0.2.3-nobar';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -363,31 +353,6 @@ const openPage = async (page: number, animate: boolean): Promise<void> => {
   }
 };
 
-const closeMenu = (): void => { ($('menu') as HTMLElement).style.display = 'none'; };
-$('b-more').onclick = (e) => {
-  e.stopPropagation();
-  const m = $('menu') as HTMLElement;
-  m.style.display = m.style.display !== 'none' ? 'none' : 'block';
-};
-($('menu') as HTMLElement).addEventListener('click', (e) => {
-  if ((e.target as HTMLElement).closest('button')) closeMenu();
-});
-document.addEventListener('click', (e) => {
-  const m = $('menu') as HTMLElement;
-  if (m.style.display !== 'none' && !(e.target as HTMLElement).closest('#menu') && !(e.target as HTMLElement).closest('#b-more')) closeMenu();
-});
-$('b-refresh').onclick = () => void pollList(true);
-$('b-open').onclick = () => { if (current) void host.openUrl(current.url); };
-$('b-login').onclick = async () => {
-  if (COMMUNITY === 'linuxdo') await host.openUrl('https://linux.do/login');
-  else await host.openUrl('https://www.v2ex.com/signin');
-  say('已打开社区登录页：登完点「检查登录」。（MVP：service 暂未接登录态，匿名可读）');
-};
-$('b-cfg').onclick = () => {
-  const c = $('cfg');
-  const open = c.style.display !== 'none';
-  c.style.display = open ? 'none' : 'flex';
-};
 $('b-save').onclick = async () => {
   const v = (document.querySelector('#cfg-proxy') as HTMLInputElement).value.trim();
   if (v && !/^https?:\/\/.+/.test(v)) { $('cfg-out').textContent = '格式不对，要 http(s)://host:port'; return; }
@@ -396,15 +361,10 @@ $('b-save').onclick = async () => {
   $('cfg-out').textContent = '已保存，正在测试…';
   listAt = 0;
   await pollList(true);
-  $('cfg-out').textContent = topics.length > 0 ? `连通（${topics.length} 条）` : '仍失败，看上方红字（可能是代理地址不对或要认证）';
+  $('cfg-out').textContent = topics.length > 0 ? `连通（${topics.length} 条）` : '仍失败，看列表上方红字（可能是代理地址不对或要认证）';
 };
-$('b-bell').onclick = async () => {
-  try {
-    const r = await svc('POST', '/notifications', JSON.stringify({}));
-    const j = JSON.parse(r.body) as { ok: boolean; error?: string };
-    say(esc(j.error ?? '通知不可用'));
-  } catch (e) { say(esc(e instanceof Error ? e.message : '通知失败')); }
-};
+
+// 快捷键 R 刷新 / O 浏览器打开（头部按钮已删，功能保留）
 
 // 草稿：按社区+帖子保留，发送成功才清；失败永不自动重发（moyu）
 draftEl.addEventListener('input', () => {
@@ -446,11 +406,7 @@ document.addEventListener('keydown', (e) => {
 });
 let escCount = 0;
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    const m = $('menu') as HTMLElement;
-    if (m.style.display !== 'none') { closeMenu(); escCount = 0; return; }
-    escCount++; if (escCount >= 2) { escCount = 0; void host.close(); } setTimeout(() => (escCount = 0), 500);
-  }
+  if (e.key === 'Escape') { escCount++; if (escCount >= 2) { escCount = 0; void host.close(); } setTimeout(() => (escCount = 0), 500); }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
 

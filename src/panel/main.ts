@@ -21,6 +21,8 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 let community: CommunityId = 'v2ex';
+// 无站内详情的榜单转跳源：列表标题挂 ↗，点进卡片去浏览器看原文
+const LINK_ONLY: readonly string[] = ['zhihu', 'toutiao', 'csdn', 'oschina'];
 const info = (): CommunityInfo => COMMUNITIES.find((c) => c.id === community)!;
 const LIST_TTL = 3 * 60 * 1000;
 
@@ -42,6 +44,7 @@ button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.active{background:var(--oc-hover,#8882)}
 .nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere}
 .nrow .mm{font-size:12px;color:var(--oc-muted,#999);white-space:nowrap}
+.nrow .ext{color:var(--oc-muted,#999);font-size:12px;white-space:nowrap;margin-left:4px}
 .nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1}
 .nrow.chan .dot{color:var(--oc-muted,#999)}
 body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
@@ -128,7 +131,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.5.6-infoq';
+const BUILD = 'v0.5.7-marks';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -258,7 +261,10 @@ const paintList = (): void => {
     if (t.channel) parts.push(esc(t.channel));
     if (t.replies !== null) parts.push(`${t.replies}回复`);
     if (t.time) parts.push(rel(t.time));
-    d.innerHTML = `<span class="tt">${esc(t.title)}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
+    // 榜单转跳源（无站内详情）：标题后挂 ↗，点进卡片去浏览器看原文
+    const ext = (LINK_ONLY as readonly string[]).includes(t.community)
+      ? ' <span class="ext" title="榜单转跳：无站内详情，点卡片去浏览器看原文">↗</span>' : '';
+    d.innerHTML = `<span class="tt">${esc(t.title)}${ext}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
     d.onclick = () => void openTopic(t);
     topicsEl.appendChild(d);
   }
@@ -312,7 +318,7 @@ const msgCard = (mine: boolean, author: string, time: number | null, html: strin
 
 // 帖内链接走宿主浏览器打开（sandbox 里点不开，统一经 openUrl）
 // 热榜原文卡：整块 bubble 可点，直接跳原文（不用精确点中链接文字；InfoQ 有真正在文，不劫持）
-const HOT: readonly string[] = ['zhihu', 'toutiao', 'csdn', 'oschina'];
+const HOT: readonly string[] = LINK_ONLY;
 threadEl.addEventListener('click', (e) => {
   const a = (e.target as HTMLElement).closest?.('a') as HTMLAnchorElement | null;
   if (a?.href) { e.preventDefault(); void host.openUrl(a.href); return; }

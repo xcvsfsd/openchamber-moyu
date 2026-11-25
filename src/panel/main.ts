@@ -22,7 +22,8 @@ window.addEventListener('unhandledrejection', (e) => {
 
 let community: CommunityId = 'v2ex';
 // 无站内详情的榜单转跳源：列表标题挂 ↗，点进卡片去浏览器看原文
-const LINK_ONLY: readonly string[] = ['zhihu', 'toutiao', 'csdn', 'oschina'];
+// 开源中国已有 RSS 摘要 + 站内详情，不在此列
+const LINK_ONLY: readonly string[] = ['zhihu', 'toutiao', 'csdn'];
 const info = (): CommunityInfo => COMMUNITIES.find((c) => c.id === community)!;
 const LIST_TTL = 3 * 60 * 1000;
 
@@ -48,6 +49,7 @@ button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow .aibtn{flex:0 0 auto;align-self:center;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 9px;white-space:nowrap}
 .nrow .aibtn:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 .nrow .aisum{flex:1 1 100%;font-size:12.5px;line-height:1.7;opacity:.92;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
+.nrow .xp{display:block;font-size:12.5px;opacity:.8;margin-top:1px}
 .nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1}
 .nrow.chan .dot{color:var(--oc-muted,#999)}
 body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
@@ -137,7 +139,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.6.3-rowbtn';
+const BUILD = 'v0.7.0-altsrc';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -270,7 +272,8 @@ const paintList = (): void => {
     // 榜单转跳源（无站内详情）：标题后挂 ↗，点进卡片去浏览器看原文
     const ext = (LINK_ONLY as readonly string[]).includes(t.community)
       ? ' <span class="ext" title="榜单转跳：无站内详情，点卡片去浏览器看原文">↗</span>' : '';
-    d.innerHTML = `<span class="tt">${esc(t.title)}${ext}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
+    const xcp = t.excerpt ? `<br><span class="xp">${esc(t.excerpt)}</span>` : '';
+    d.innerHTML = `<span class="tt">${esc(t.title)}${ext}${xcp}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
     // 有正文的源才挂 AI 按钮（榜单转跳源无内容可总结）
     const linkOnly = (LINK_ONLY as readonly string[]).includes(t.community);
     if (!linkOnly) {
@@ -421,8 +424,8 @@ const paintThread = async (animate: boolean): Promise<void> => {
   if (t.time) actParts.push(rel(t.time));
   const act = `<div class="act"><span>帖子</span><span class="sep">›</span><span>${actParts.join(' · ')}</span></div>`;
   const cards: string[] = [act];
-  // 热榜单篇（InfoQ 正文 / 榜单转跳卡）：无回帖，正文全宽平铺，不套气泡
-  const flat = [...LINK_ONLY, 'infoq'].includes(thread.topic.community);
+  // 热榜单篇（InfoQ/开源中国正文 / 榜单转跳卡）：无回帖，正文全宽平铺，不套气泡
+  const flat = [...LINK_ONLY, 'oschina', 'infoq'].includes(thread.topic.community);
   if (thread.opening) cards.push(flat ? articleCard(thread.opening.html) : msgCard(true, thread.opening.author, thread.opening.time, thread.opening.html, []));
   thread.posts.forEach((p) => {
     const tags = [`<span class="op">楼主</span>`, `#${p.floor}`, p.replyTo ? `回复 #${p.replyTo}` : '', p.likes !== null ? `❤${p.likes}` : ''].filter((s, i) => i === 0 ? p.byAuthor : Boolean(s));

@@ -171,8 +171,8 @@ ${login}\r
 `);
   });
 });
-var secured = (socket, host, signal) => new Promise((resolve, reject) => {
-  const tls = connectTls({ socket, servername: host, ALPNProtocols: ["h2"] });
+var secured = (socket, host, signal, alpn = ["h2"], requireH2 = true) => new Promise((resolve, reject) => {
+  const tls = connectTls({ socket, servername: host, ALPNProtocols: alpn });
   let settled = false;
   const end = (err) => {
     if (settled)
@@ -194,7 +194,7 @@ var secured = (socket, host, signal) => new Promise((resolve, reject) => {
   }
   signal.addEventListener("abort", onAbort);
   tls.on("error", onError);
-  tls.once("secureConnect", () => end(tls.alpnProtocol === "h2" ? null : new Error("对方不支持 HTTP/2")));
+  tls.once("secureConnect", () => end(requireH2 && tls.alpnProtocol !== "h2" ? new Error("对方不支持 HTTP/2") : null));
 });
 var plainHeaders = (headers) => {
   const out = {};
@@ -266,6 +266,175 @@ var h2get = async (url, signal, options = {}) => {
     stream.on("end", () => end(null, { status, headers, body: Buffer.concat(chunks) }));
     stream.on("error", () => end(new Error("网络错误")));
     stream.on("close", () => end(new Error("网络错误")));
+  });
+};
+var h1get = async (url, signal, options = {}) => {
+  const target = new URL(url);
+  if (target.protocol !== "https:")
+    throw new Error("只支持 https");
+  const stop = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS)]);
+  const abortError = () => new Error(signal.aborted ? "已取消" : "超时");
+  if (stop.aborted)
+    throw abortError();
+  const proxy = options.proxy === undefined ? proxyFor(target) : options.proxy;
+  const maxBytes = options.maxBytes ?? MAX_BYTES;
+  const port = Number(target.port || 443);
+  let sock;
+  try {
+    const carrier = proxy ? await tunnel(new URL(proxy), target.hostname, port, stop) : await new Promise((res, rej) => {
+      const s = connectTcp({ host: target.hostname, port });
+      s.once("connect", () => res(s));
+      s.once("error", rej);
+    });
+    sock = await secured(carrier, target.hostname, stop, ["http/1.1"], false);
+  } catch (e) {
+    throw stop.aborted ? abortError() : e;
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const end = (err, response) => {
+      if (settled)
+        return;
+      settled = true;
+      stop.removeEventListener("abort", onAbort);
+      sock.destroy();
+      if (response)
+        resolve(response);
+      else
+        reject(err ?? new Error("网络错误"));
+    };
+    const onAbort = () => end(abortError());
+    if (stop.aborted) {
+      end(abortError());
+      return;
+    }
+    stop.addEventListener("abort", onAbort);
+    const path = target.pathname + target.search || "/";
+    sock.on("error", () => end(new Error("网络错误")));
+    const chunks = [];
+    let size = 0;
+    let headerEnd = -1;
+    let status = 0;
+    let headers = {};
+    let bodyMode = "close";
+    let need = 0;
+    let chunkLeft = -1;
+    let done = false;
+    const parseHeaders = (head) => {
+      const lines = head.split(`\r
+`);
+      status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(lines[0] ?? "")?.[1] ?? 0);
+      headers = {};
+      for (const ln of lines.slice(1)) {
+        const i = ln.indexOf(":");
+        if (i > 0)
+          headers[ln.slice(0, i).trim().toLowerCase()] = ln.slice(i + 1).trim();
+      }
+      if (/chunked/i.test(headers["transfer-encoding"] ?? ""))
+        bodyMode = "chunked";
+      else if (headers["content-length"] !== undefined) {
+        bodyMode = "length";
+        need = Number(headers["content-length"]);
+      } else
+        bodyMode = "close";
+      if (Number(headers["content-length"]) > maxBytes)
+        end(new Error("响应太大"));
+    };
+    const feedBody = (buf) => {
+      if (bodyMode === "length" || bodyMode === "close") {
+        size += buf.length;
+        if (size > maxBytes) {
+          end(new Error("响应太大"));
+          return Buffer.alloc(0);
+        }
+        chunks.push(buf);
+        if (bodyMode === "length" && size >= need)
+          finish();
+        return Buffer.alloc(0);
+      }
+      let rest = buf;
+      while (rest.length > 0 && !done) {
+        if (chunkLeft < 0) {
+          const eol = rest.indexOf(`\r
+`);
+          if (eol < 0)
+            break;
+          const line = rest.subarray(0, eol).toString("latin1");
+          rest = rest.subarray(eol + 2);
+          chunkLeft = parseInt(line.split(";")[0].trim(), 16);
+          if (Number.isNaN(chunkLeft)) {
+            end(new Error("代理的回应读不懂"));
+            return Buffer.alloc(0);
+          }
+          if (chunkLeft === 0) {
+            done = true;
+            finish();
+            return Buffer.alloc(0);
+          }
+        }
+        if (rest.length < chunkLeft + 2)
+          break;
+        const piece = rest.subarray(0, chunkLeft);
+        size += piece.length;
+        if (size > maxBytes) {
+          end(new Error("响应太大"));
+          return Buffer.alloc(0);
+        }
+        chunks.push(piece);
+        rest = rest.subarray(chunkLeft + 2);
+        chunkLeft = -1;
+      }
+      return rest;
+    };
+    let stash = Buffer.alloc(0);
+    const finish = () => {
+      if (settled)
+        return;
+      end(null, { status, headers, body: Buffer.concat(chunks) });
+    };
+    sock.on("data", (c) => {
+      if (settled || done)
+        return;
+      let buf = Buffer.concat([stash, c]);
+      stash = Buffer.alloc(0);
+      if (headerEnd < 0) {
+        const i = buf.indexOf(`\r
+\r
+`);
+        if (i < 0) {
+          if (buf.length > 64 * 1024)
+            end(new Error("响应头太大"));
+          else
+            stash = buf;
+          return;
+        }
+        headerEnd = i;
+        parseHeaders(buf.subarray(0, i).toString("latin1"));
+        if (settled)
+          return;
+        buf = buf.subarray(i + 4);
+      }
+      const leftover = feedBody(buf);
+      if (leftover.length > 0)
+        stash = leftover;
+    });
+    sock.on("end", () => {
+      if (bodyMode === "close" && !settled)
+        finish();
+      else if (!settled)
+        end(new Error("网络错误"));
+    });
+    sock.on("close", () => {
+      if (bodyMode === "close" && !settled && headerEnd >= 0)
+        finish();
+    });
+    sock.write(`GET ${path} HTTP/1.1\r
+Host: ${target.hostname}\r
+User-Agent: ${UA}\r
+Accept: */*\r
+Connection: close\r
+\r
+`);
   });
 };
 
@@ -508,9 +677,7 @@ var v2exThread = async (id, page, proxy) => {
 };
 var TOPHUB_BOARDS = {
   zhihu: { hash: "mproPpoq6O", sub: "热榜" },
-  toutiao: { hash: "x9ozB4KoXb", sub: "头条热榜" },
-  csdn: { hash: "n3moBVoN5O", sub: "热点" },
-  oschina: { hash: "rYqoXZzdOD", sub: "热门资讯" }
+  csdn: { hash: "n3moBVoN5O", sub: "热点" }
 };
 var HOT_IDS = ["zhihu", "toutiao", "csdn", "oschina", "infoq"];
 var stripTags = (s) => s.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
@@ -522,7 +689,7 @@ var tophubList = async (community, proxy) => {
   try {
     r = await timedFetch(`https://tophub.today/n/${board.hash}`, proxy);
   } catch {
-    throw new Error("tophub 暂时连不上（对侧限流/拦截），过几分钟按 R 再试；V2EX / linux.do / InfoQ 可用");
+    throw new Error("tophub 暂时连不上（对侧限流/拦截），过几分钟按 R 再试；V2EX / linux.do / InfoQ / 头条 / 开源中国可用");
   }
   if (r.status !== 200)
     throw new Error(`热榜返回了 ${r.status}（对侧限流时过几分钟按 R 再试）`);
@@ -593,6 +760,75 @@ var infoqList = async (proxy) => {
     throw new Error("InfoQ 返回的内容读不懂");
   return out;
 };
+var formatHot = (v) => v >= 1e4 ? `${(v / 1e4).toFixed(1)}万` : String(v);
+var toutiaoList = async (proxy) => {
+  let r;
+  try {
+    r = await timedFetch("https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc", proxy);
+  } catch {
+    throw new Error("头条榜单暂时连不上，过几分钟按 R 再试");
+  }
+  if (r.status !== 200)
+    throw new Error(`头条榜单返回了 ${r.status}`);
+  let data;
+  try {
+    data = await r.json();
+  } catch {
+    throw new Error("头条榜单读不懂");
+  }
+  const items = data.data;
+  if (!Array.isArray(items) || items.length === 0)
+    throw new Error("头条榜单读不懂");
+  return items.slice(0, 50).map((it, i) => {
+    const url = typeof it.Url === "string" && it.Url.startsWith("http") ? it.Url : `https://www.toutiao.com/trending/${typeof it.ClusterIdStr === "string" ? it.ClusterIdStr : ""}/`;
+    return {
+      community: "toutiao",
+      id: String(i + 1),
+      title: typeof it.Title === "string" && it.Title ? it.Title.slice(0, 200) : `热榜 ${i + 1}`,
+      author: typeof it.HotValue === "number" ? `热度 ${formatHot(it.HotValue)}` : "",
+      avatar: null,
+      channel: "热榜",
+      replies: null,
+      time: null,
+      url
+    };
+  });
+};
+var oscExcerpt = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
+var oschinaList = async (proxy) => {
+  await pace();
+  const ctrl = new AbortController;
+  let raw;
+  try {
+    const h = await h1get("https://www.oschina.net/news/rss", ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
+    if (h.status !== 200)
+      throw new Error(`开源中国返回了 ${h.status}`);
+    raw = h.body.toString("utf8");
+  } catch (e) {
+    if (e instanceof Error && /开源中国返回/.test(e.message))
+      throw e;
+    throw new Error("开源中国暂时连不上，过几分钟按 R 再试");
+  }
+  const items = parseRss(raw);
+  if (items.length === 0)
+    throw new Error("开源中国返回的内容读不懂");
+  return items.slice(0, 50).map((item, i) => {
+    const link = typeof item.link === "string" ? item.link.replace(/<!\[CDATA\[|\]\]>/g, "").trim() : "";
+    const m = /\/news\/(\d+)/.exec(link);
+    return {
+      community: "oschina",
+      id: m?.[1] ?? String(i + 1),
+      title: (item.title ?? "").slice(0, 200),
+      author: typeof item.creator === "string" ? item.creator : "",
+      avatar: null,
+      channel: "资讯",
+      replies: null,
+      time: millis(typeof item.pubDate === "string" ? item.pubDate : null),
+      url: link || "https://www.oschina.net/news",
+      excerpt: oscExcerpt(typeof item.description === "string" ? item.description : "")
+    };
+  }).filter((t) => t.title);
+};
 var hotThread = async (community, id, proxy) => {
   if (!/^\d{1,12}$/.test(id))
     throw new Error("请求的参数不对（id）");
@@ -607,6 +843,26 @@ var hotThread = async (community, id, proxy) => {
     avatar: null,
     html: `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`,
     time: null,
+    replyTo: null,
+    likes: null,
+    byAuthor: true
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+var escHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+var oschinaThread = async (id, proxy) => {
+  const topics = (await cachedList("oschina", "hot", proxy)).topics;
+  const t = topics.find((x) => x.id === id) ?? (/^\d{1,12}$/.test(id) ? topics[Number(id) - 1] : undefined);
+  if (!t)
+    throw new Error("帖子不存在");
+  const safeUrl = t.url.replace(/&/g, "&amp;");
+  const body = t.excerpt ? `<p>${escHtml(t.excerpt)}</p><p><a href="${safeUrl}">在浏览器中查看原文</a></p>` : `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  const opening = {
+    floor: 0,
+    author: t.author,
+    avatar: null,
+    html: body,
+    time: t.time,
     replyTo: null,
     likes: null,
     byAuthor: true
@@ -690,11 +946,14 @@ var cachedList = async (community, channel, proxy) => {
   }
 };
 var fetchList = async (community, channel, proxy) => {
-  if (HOT_IDS.includes(community)) {
-    if (community === "infoq")
-      return infoqList(proxy);
+  if (community === "toutiao")
+    return toutiaoList(proxy);
+  if (community === "oschina")
+    return oschinaList(proxy);
+  if (community === "infoq")
+    return infoqList(proxy);
+  if (community === "zhihu" || community === "csdn")
     return tophubList(community, proxy);
-  }
   if (community === "linuxdo")
     return linuxdoList(channel, proxy);
   if (community === "v2ex")
@@ -755,6 +1014,8 @@ var server = http.createServer((req, res) => {
     (async () => {
       if (community === "infoq")
         return infoqThread(id, px);
+      if (community === "oschina")
+        return oschinaThread(id, px);
       if (HOT_IDS.includes(community))
         return hotThread(community, id, px);
       return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);

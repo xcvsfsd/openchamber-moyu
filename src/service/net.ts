@@ -88,9 +88,9 @@ const tunnel = (proxy: URL, host: string, port: number, signal: AbortSignal): Pr
     });
   });
 
-const secured = (socket: Socket, host: string, signal: AbortSignal): Promise<Socket> =>
+const secured = (socket: Socket, host: string, signal: AbortSignal, alpn: string[] = ['h2'], requireH2 = true): Promise<Socket> =>
   new Promise<Socket>((resolve, reject) => {
-    const tls = connectTls({ socket, servername: host, ALPNProtocols: ['h2'] });
+    const tls = connectTls({ socket, servername: host, ALPNProtocols: alpn });
     let settled = false;
     const end = (err: Error | null): void => {
       if (settled) return;
@@ -104,7 +104,7 @@ const secured = (socket: Socket, host: string, signal: AbortSignal): Promise<Soc
     if (signal.aborted) { end(new Error('已取消')); return; }
     signal.addEventListener('abort', onAbort);
     tls.on('error', onError);
-    tls.once('secureConnect', () => end(tls.alpnProtocol === 'h2' ? null : new Error('对方不支持 HTTP/2')));
+    tls.once('secureConnect', () => end(requireH2 && tls.alpnProtocol !== 'h2' ? new Error('对方不支持 HTTP/2') : null));
   });
 
 const plainHeaders = (headers: IncomingHttpHeaders): Record<string, string> => {
@@ -165,5 +165,125 @@ export const h2get = async (url: string, signal: AbortSignal, options: H2Options
     stream.on('end', () => end(null, { status, headers, body: Buffer.concat(chunks) }));
     stream.on('error', () => end(new Error('网络错误')));
     stream.on('close', () => end(new Error('网络错误')));
+  });
+};
+
+// ---- HTTP/1.1（给不支持 h2 的站：oschina 等。复用 CONNECT 隧道 + TLS，只是不协商 h2） ----
+export const h1get = async (url: string, signal: AbortSignal, options: H2Options = {}): Promise<HttpResponse> => {
+  const target = new URL(url);
+  if (target.protocol !== 'https:') throw new Error('只支持 https');
+  const stop = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS)]);
+  const abortError = (): Error => new Error(signal.aborted ? '已取消' : '超时');
+  if (stop.aborted) throw abortError();
+  const proxy = options.proxy === undefined ? proxyFor(target) : options.proxy;
+  const maxBytes = options.maxBytes ?? MAX_BYTES;
+  const port = Number(target.port || 443);
+  let sock: Socket;
+  try {
+    const carrier = proxy ? await tunnel(new URL(proxy), target.hostname, port, stop) : await new Promise<Socket>((res, rej) => {
+      const s = connectTcp({ host: target.hostname, port });
+      s.once('connect', () => res(s));
+      s.once('error', rej);
+    });
+    sock = await secured(carrier, target.hostname, stop, ['http/1.1'], false);
+  } catch (e) { throw stop.aborted ? abortError() : e; }
+  return new Promise<HttpResponse>((resolve, reject) => {
+    let settled = false;
+    const end = (err: Error | null, response?: HttpResponse): void => {
+      if (settled) return;
+      settled = true;
+      stop.removeEventListener('abort', onAbort);
+      sock.destroy();
+      if (response) resolve(response);
+      else reject(err ?? new Error('网络错误'));
+    };
+    const onAbort = (): void => end(abortError());
+    if (stop.aborted) { end(abortError()); return; }
+    stop.addEventListener('abort', onAbort);
+    const path = (target.pathname + target.search) || '/';
+    sock.on('error', () => end(new Error('网络错误')));
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let headerEnd = -1;
+    let status = 0;
+    let headers: Record<string, string> = {};
+    let bodyMode: 'length' | 'chunked' | 'close' = 'close';
+    let need = 0;
+    // chunked 解析状态
+    let chunkLeft = -1;
+    let done = false;
+    const parseHeaders = (head: string): void => {
+      const lines = head.split('\r\n');
+      status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(lines[0] ?? '')?.[1] ?? 0);
+      headers = {};
+      for (const ln of lines.slice(1)) {
+        const i = ln.indexOf(':');
+        if (i > 0) headers[ln.slice(0, i).trim().toLowerCase()] = ln.slice(i + 1).trim();
+      }
+      if (/chunked/i.test(headers['transfer-encoding'] ?? '')) bodyMode = 'chunked';
+      else if (headers['content-length'] !== undefined) { bodyMode = 'length'; need = Number(headers['content-length']); }
+      else bodyMode = 'close';
+      if (Number(headers['content-length']) > maxBytes) end(new Error('响应太大'));
+    };
+    const feedBody = (buf: Buffer): Buffer => {
+      // 返回消费后剩余（chunked 行尾），length/close 模式直接全收
+      if (bodyMode === 'length' || bodyMode === 'close') {
+        size += buf.length;
+        if (size > maxBytes) { end(new Error('响应太大')); return Buffer.alloc(0); }
+        chunks.push(buf);
+        if (bodyMode === 'length' && size >= need) finish();
+        return Buffer.alloc(0);
+      }
+      // chunked
+      let rest = buf;
+      while (rest.length > 0 && !done) {
+        if (chunkLeft < 0) {
+          const eol = rest.indexOf('\r\n');
+          if (eol < 0) break; // 等更多数据（行不全；极简处理：缓存等下次）
+          const line = rest.subarray(0, eol).toString('latin1');
+          rest = rest.subarray(eol + 2);
+          chunkLeft = parseInt(line.split(';')[0]!.trim(), 16);
+          if (Number.isNaN(chunkLeft)) { end(new Error('代理的回应读不懂')); return Buffer.alloc(0); }
+          if (chunkLeft === 0) { done = true; finish(); return Buffer.alloc(0); }
+        }
+        if (rest.length < chunkLeft + 2) break; // 等更多数据
+        const piece = rest.subarray(0, chunkLeft);
+        size += piece.length;
+        if (size > maxBytes) { end(new Error('响应太大')); return Buffer.alloc(0); }
+        chunks.push(piece);
+        rest = rest.subarray(chunkLeft + 2);
+        chunkLeft = -1;
+      }
+      return rest;
+    };
+    let stash: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    const finish = (): void => {
+      if (settled) return;
+      end(null, { status, headers, body: Buffer.concat(chunks) });
+    };
+    sock.on('data', (c: Buffer) => {
+      if (settled || done) return;
+      let buf = Buffer.concat([stash, c]);
+      stash = Buffer.alloc(0);
+      if (headerEnd < 0) {
+        const i = buf.indexOf('\r\n\r\n');
+        if (i < 0) {
+          if (buf.length > 64 * 1024) end(new Error('响应头太大'));
+          else stash = buf;
+          return;
+        }
+        headerEnd = i;
+        parseHeaders(buf.subarray(0, i).toString('latin1'));
+        if (settled) return;
+        buf = buf.subarray(i + 4);
+      }
+      const leftover = feedBody(buf);
+      if (leftover.length > 0) stash = leftover;
+    });
+    sock.on('end', () => { if (bodyMode === 'close' && !settled) finish(); else if (!settled) end(new Error('网络错误')); });
+    sock.on('close', () => { if (bodyMode === 'close' && !settled && (headerEnd >= 0)) finish(); });
+    sock.write(
+      `GET ${path} HTTP/1.1\r\nHost: ${target.hostname}\r\nUser-Agent: ${UA}\r\nAccept: */*\r\nConnection: close\r\n\r\n`,
+    );
   });
 };

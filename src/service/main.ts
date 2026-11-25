@@ -22,7 +22,7 @@ const pace = async (): Promise<void> => {
   lastStart = Date.now();
 };
 
-import { h2get } from './net.js';
+import { h2get, h1get } from './net.js';
 type FetchLike = { status: number; headers: { get(n: string): string | null }; text(): Promise<string>; json(): Promise<unknown>; ok: boolean };
 const timedFetch = async (url: string, proxy?: string | null): Promise<FetchLike> => {
   await pace();
@@ -202,9 +202,7 @@ const v2exThread = async (id: string, page: number, proxy?: string | null): Prom
 // 条目只有标题/链接/热度：Topic.author 借放热度文案，channel 放子榜名。
 const TOPHUB_BOARDS: Record<string, { hash: string; sub: string }> = {
   zhihu: { hash: 'mproPpoq6O', sub: '热榜' },
-  toutiao: { hash: 'x9ozB4KoXb', sub: '头条热榜' },
   csdn: { hash: 'n3moBVoN5O', sub: '热点' },
-  oschina: { hash: 'rYqoXZzdOD', sub: '热门资讯' },
 };
 const HOT_IDS = ['zhihu', 'toutiao', 'csdn', 'oschina', 'infoq'] as const;
 
@@ -219,7 +217,7 @@ const tophubList = async (community: CommunityId, proxy?: string | null): Promis
   try {
     r = await timedFetch(`https://tophub.today/n/${board.hash}`, proxy);
   } catch {
-    throw new Error('tophub 暂时连不上（对侧限流/拦截），过几分钟按 R 再试；V2EX / linux.do / InfoQ 可用');
+    throw new Error('tophub 暂时连不上（对侧限流/拦截），过几分钟按 R 再试；V2EX / linux.do / InfoQ / 头条 / 开源中国可用');
   }
   if (r.status !== 200) throw new Error(`热榜返回了 ${r.status}（对侧限流时过几分钟按 R 再试）`);
   const body = await r.text();
@@ -271,8 +269,67 @@ const infoqList = async (proxy?: string | null): Promise<Topic[]> => {
   return out;
 };
 
+// 今日头条：官方 hot-board 直出 JSON（Title/HotValue/Url），比 tophub 稳
+const formatHot = (v: number): string =>
+  v >= 10000 ? `${(v / 10000).toFixed(1)}万` : String(v);
+const toutiaoList = async (proxy?: string | null): Promise<Topic[]> => {
+  let r;
+  try {
+    r = await timedFetch('https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc', proxy);
+  } catch {
+    throw new Error('头条榜单暂时连不上，过几分钟按 R 再试');
+  }
+  if (r.status !== 200) throw new Error(`头条榜单返回了 ${r.status}`);
+  let data: unknown;
+  try { data = await r.json(); } catch { throw new Error('头条榜单读不懂'); }
+  const items = (data as { data?: Array<{ Title?: unknown; Url?: unknown; HotValue?: unknown; ClusterIdStr?: unknown }> }).data;
+  if (!Array.isArray(items) || items.length === 0) throw new Error('头条榜单读不懂');
+  return items.slice(0, 50).map((it, i) => {
+    const url = typeof it.Url === 'string' && it.Url.startsWith('http') ? it.Url
+      : `https://www.toutiao.com/trending/${typeof it.ClusterIdStr === 'string' ? it.ClusterIdStr : ''}/`;
+    return {
+      community: 'toutiao' as const, id: String(i + 1),
+      title: typeof it.Title === 'string' && it.Title ? it.Title.slice(0, 200) : `热榜 ${i + 1}`,
+      author: typeof it.HotValue === 'number' ? `热度 ${formatHot(it.HotValue)}` : '',
+      avatar: null, channel: '热榜', replies: null, time: null, url,
+    };
+  });
+};
+
+// 开源中国：官方新闻 RSS（服务端直出，带摘要），走 HTTP/1.1（对方不支持 h2）
+const oscExcerpt = (html: string): string =>
+  html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220);
+const oschinaList = async (proxy?: string | null): Promise<Topic[]> => {
+  await pace();
+  const ctrl = new AbortController();
+  let raw: string;
+  try {
+    const h = await h1get('https://www.oschina.net/news/rss', ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
+    if (h.status !== 200) throw new Error(`开源中国返回了 ${h.status}`);
+    raw = h.body.toString('utf8');
+  } catch (e) {
+    if (e instanceof Error && /开源中国返回/.test(e.message)) throw e;
+    throw new Error('开源中国暂时连不上，过几分钟按 R 再试');
+  }
+  const items = parseRss(raw);
+  if (items.length === 0) throw new Error('开源中国返回的内容读不懂');
+  return items.slice(0, 50).map((item, i) => {
+    const link = typeof item.link === 'string' ? item.link.replace(/<!\[CDATA\[|\]\]>/g, '').trim() : '';
+    const m = /\/news\/(\d+)/.exec(link);
+    return {
+      community: 'oschina' as const, id: m?.[1] ?? String(i + 1),
+      title: (item.title ?? '').slice(0, 200),
+      author: typeof item.creator === 'string' ? item.creator : '',
+      avatar: null, channel: '资讯', replies: null,
+      time: millis(typeof item.pubDate === 'string' ? item.pubDate : null),
+      url: link || 'https://www.oschina.net/news',
+      excerpt: oscExcerpt(typeof item.description === 'string' ? item.description : ''),
+    };
+  }).filter((t) => t.title);
+};
+
 // 热榜正文=原文链接卡（无评论）：从 3 分钟列表缓存里按序号取，缓存未命中就现拉
-// tophub 四榜（知乎/头条/CSDN/开源中国）原文页均有反爬（验证/403/纯 JS 壳），只给转跳卡。
+// tophub 两榜（知乎/CSDN）与头条原文页均有反爬（验证/403/纯 JS 壳），只给转跳卡。
 const hotThread = async (community: CommunityId, id: string, proxy?: string | null): Promise<Thread> => {
   if (!/^\d{1,12}$/.test(id)) throw new Error('请求的参数不对（id）');
   const topics = (await cachedList(community, 'hot', proxy)).topics;
@@ -283,6 +340,24 @@ const hotThread = async (community: CommunityId, id: string, proxy?: string | nu
     floor: 0, author: '', avatar: null,
     html: `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`,
     time: null, replyTo: null, likes: null, byAuthor: true,
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+
+// 开源中国正文=RSS 摘要 + 原文链接（详情页是 JS 壳，摘要即正文）
+const escHtml = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const oschinaThread = async (id: string, proxy?: string | null): Promise<Thread> => {
+  const topics = (await cachedList('oschina', 'hot', proxy)).topics;
+  const t = topics.find((x) => x.id === id) ?? (/^\d{1,12}$/.test(id) ? topics[Number(id) - 1] : undefined);
+  if (!t) throw new Error('帖子不存在');
+  const safeUrl = t.url.replace(/&/g, '&amp;');
+  const body = t.excerpt
+    ? `<p>${escHtml(t.excerpt)}</p><p><a href="${safeUrl}">在浏览器中查看原文</a></p>`
+    : `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  const opening: Post = {
+    floor: 0, author: t.author, avatar: null, html: body,
+    time: t.time, replyTo: null, likes: null, byAuthor: true,
   };
   return { topic: t, opening, posts: [], page: 1, more: false };
 };
@@ -344,10 +419,10 @@ const cachedList = async (community: CommunityId, channel: string, proxy?: strin
 };
 
 const fetchList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<Topic[]> => {
-  if ((HOT_IDS as readonly string[]).includes(community)) {
-    if (community === 'infoq') return infoqList(proxy);
-    return tophubList(community, proxy);
-  }
+  if (community === 'toutiao') return toutiaoList(proxy);
+  if (community === 'oschina') return oschinaList(proxy);
+  if (community === 'infoq') return infoqList(proxy);
+  if (community === 'zhihu' || community === 'csdn') return tophubList(community, proxy);
   if (community === 'linuxdo') return linuxdoList(channel, proxy);
   if (community === 'v2ex') return v2exList(channel, proxy);
   throw new Error('bad-community');
@@ -400,6 +475,7 @@ const server = http.createServer((req, res) => {
     const px = proxyOf(req, url) ?? undefined;
     (async () => {
       if (community === 'infoq') return infoqThread(id, px);
+      if (community === 'oschina') return oschinaThread(id, px);
       if ((HOT_IDS as readonly string[]).includes(community)) return hotThread(community, id, px);
       return community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     })().then(

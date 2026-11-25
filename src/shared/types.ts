@@ -9,6 +9,7 @@ export type Topic = {
   community: CommunityId; id: string; title: string; author: string;
   avatar: string | null; channel: string | null;
   replies: number | null; time: number | null; url: string;
+  excerpt?: string | null;
 };
 export type Post = {
   id?: string; floor: number; author: string; avatar: string | null;

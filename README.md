@@ -1,9 +1,9 @@
 # openchamber-moyu
 
-两个 OpenChamber 扩展：在 OpenChamber 里看 linux.do / V2EX，界面和 AI 聊天页一样。 port 自 [flyhero/antumi-moyu](https://github.com/flyhero/antumi-moyu)，设计思路照抄 moyu，**不套禅道面板那套**。
+一个 OpenChamber 扩展：在 OpenChamber 里看 linux.do / V2EX（面板内切换社区），界面和 AI 聊天页一样。 port 自 [flyhero/antumi-moyu](https://github.com/flyhero/antumi-moyu)，设计思路照抄 moyu，**不套禅道面板那套**。
 
 - 话题列表是「会话」，楼主是用户消息，回帖是助手回答——全是假聊天，画在全屏 page 里，不碰真会话。
-- 一码两包：`extensions/linuxdo`（阅读 L）、`extensions/v2ex`（阅读 V），共用 `src/`，只装要的那个也行。
+- 单包双社区：`extensions/moyu`（侧栏“阅读”），面板内 社区 区切换 linux.do / V2EX，偏好按社区分别记住（默认 V2EX）。
 - 匿名可读；登录/回复/点赞/通知先占位（service 按 moyu 语气回 need-login），正文链路已通。
 
 ## 安装
@@ -11,8 +11,7 @@
 OpenChamber → 设置 → 扩展 → 粘贴本地路径安装（改完 `bun run build` 即生效）：
 
 ```text
-/home/liaoz/code/openchamber-moyu/extensions/linuxdo
-/home/liaoz/code/openchamber-moyu/extensions/v2ex
+/home/liaoz/code/openchamber-moyu/extensions/moyu
 ```
 
 批准 `service` 能力，点 rail 图标或 Extension pages 进全屏。

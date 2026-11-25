@@ -3,7 +3,7 @@
 import { connectHost } from '@openchamber/sdk';
 import { applyHostReady } from '@openchamber/sdk/ui';
 import DOMPurify from 'dompurify';
-import type { CommunityId, Thread, Topic } from '../shared/types.js';
+import type { CommunityId, CommunityInfo, Thread, Topic } from '../shared/types.js';
 import { COMMUNITIES } from '../shared/types.js';
 
 // 全局报错浮层：宿主里出任何异常都写进 #msg，空白页时也能定位
@@ -20,8 +20,8 @@ window.addEventListener('unhandledrejection', (e) => {
   showBootErrors();
 });
 
-const COMMUNITY = (document.querySelector('meta[name="moyu-community"]')?.getAttribute('content') === 'v2ex' ? 'v2ex' : 'linuxdo') as CommunityId;
-const INFO = COMMUNITIES.find((c) => c.id === COMMUNITY)!;
+let community: CommunityId = 'v2ex';
+const info = (): CommunityInfo => COMMUNITIES.find((c) => c.id === community)!;
 const LIST_TTL = 3 * 60 * 1000;
 
 const host = connectHost();
@@ -46,6 +46,7 @@ button.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow .go:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 .nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-line-clamp:1}
 .nrow.chan .dot{color:var(--oc-muted,#999)}
+body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
 /* 中：原生聊天列 */
 main{flex:1;display:flex;flex-direction:column;min-width:0}
 .hd .crumb{font-weight:700}
@@ -86,9 +87,9 @@ button:disabled{opacity:.5}
 /* 窄 rail：列表态只留目录（main 整个隐藏，无空白）；看正文切 thread 视图 */
 body[data-narrow="1"] #app{flex-direction:column}
 body[data-narrow="1"] aside{width:100%;max-width:none;max-height:none;border-bottom:none;padding:6px;flex:1;min-height:0}
-body[data-narrow="1"] #chanrow{display:flex;overflow-x:auto;scrollbar-width:none}
-body[data-narrow="1"] #chanrow::-webkit-scrollbar{display:none}
-body[data-narrow="1"] .nrow.chan{flex:0 0 auto}
+body[data-narrow="1"] #chanrow,body[data-narrow="1"] #chanrow2{display:flex;overflow-x:auto;scrollbar-width:none}
+body[data-narrow="1"] #chanrow::-webkit-scrollbar,body[data-narrow="1"] #chanrow2::-webkit-scrollbar{display:none}
+body[data-narrow="1"] #chanrow > div,body[data-narrow="1"] #chanrow2 > div{display:flex;gap:4px}
 body[data-narrow="1"] main{border-left:none;min-height:0}
 body[data-narrow="1"][data-view="list"] main{display:none}
 body[data-narrow="1"][data-view="thread"] aside{display:none}
@@ -104,7 +105,8 @@ body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
 </style>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
-  <div class="sec">频道</div><div id="chanrow"><div id="channels"></div></div>
+  <div class="sec">社区</div><div id="chanrow"><div id="communities"></div></div>
+  <div class="sec">频道</div><div id="chanrow2"><div id="channels"></div></div>
   <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="topics"></div>
   <div class="sec">配置</div>
   <div id="cfgside">
@@ -126,14 +128,14 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.11-noboss';
-cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
+const BUILD = 'v0.4.0-merged';
+cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
 type Prefs = { stream: boolean; images: boolean; mask: boolean };
 let prefs: Prefs = { stream: true, images: false, mask: false };
 let proxy = '';
-let channel = INFO.channels[0]!.id;
+let channel = info().channels[0]!.id;
 let topics: Topic[] = [];
 let listAt = 0;
 let current: Topic | null = null;
@@ -179,16 +181,19 @@ const svc = async (method: string, path: string, body?: string): Promise<{ statu
 };
 
 const loadPrefs = async (): Promise<void> => {
-  const v = await storeGet(`moyu:prefs:${COMMUNITY}`) as Prefs | undefined;
+  const savedC = (await storeGet('moyu:community') as CommunityId | undefined) ?? 'v2ex';
+  if (savedC === 'linuxdo' || savedC === 'v2ex') community = savedC;
+  const v = await storeGet(`moyu:prefs:${community}`) as Prefs | undefined;
   if (v && typeof v.stream === 'boolean') prefs = v;
   proxy = (await storeGet('moyu:proxy') as string | undefined) ?? '';
   (document.querySelector('#cfg-proxy') as HTMLInputElement).value = proxy;
-  const ch = (await storeGet(`moyu:channel:${COMMUNITY}`) as string | undefined) ?? '';
-  if (ch && INFO.channels.some((c) => c.id === ch)) channel = ch;
+  const ch = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
+  channel = info().channels[0]!.id;
+  if (ch && info().channels.some((c) => c.id === ch)) channel = ch;
   paintSwitches();
 };
 const isNarrow = (): boolean => document.body.dataset.narrow === '1';
-const savePrefs = (): void => { void storeSet(`moyu:prefs:${COMMUNITY}`, prefs); };
+const savePrefs = (): void => { void storeSet(`moyu:prefs:${community}`, prefs); };
 const paintSwitches = (): void => {
   // 开关已随回复框移除，这里只做空保护（图片占位点击会调到）
   for (const id of ['sw-stream', 'sw-img']) {
@@ -197,19 +202,46 @@ const paintSwitches = (): void => {
   }
 };
 
+const paintCommunities = (): void => {
+  const box = $('communities');
+  box.innerHTML = '';
+  for (const c of COMMUNITIES) {
+    const b = document.createElement('button');
+    b.className = 'nrow chan' + (community === c.id ? ' active' : '');
+    b.innerHTML = `<span class="dot">●</span><span class="tt">${esc(c.name)}</span>`;
+    b.onclick = () => { if (community !== c.id) void switchCommunity(c.id); };
+    box.appendChild(b);
+  }
+};
+
+const switchCommunity = async (id: CommunityId): Promise<void> => {
+  community = id;
+  await storeSet('moyu:community', community);
+  channel = info().channels[0]!.id;
+  current = null; thread = null; topics = []; listAt = 0;
+  const v = await storeGet(`moyu:prefs:${community}`) as Prefs | undefined;
+  if (v && typeof v.stream === 'boolean') prefs = v;
+  const ch = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
+  if (ch && info().channels.some((c) => c.id === ch)) channel = ch;
+  paintCommunities();
+  paintList();
+  void pollList(true);
+};
+
 const paintChannels = (): void => {
   const box = $('channels');
   box.innerHTML = '';
-  for (const c of INFO.channels) {
+  for (const c of info().channels) {
     const b = document.createElement('button');
     b.className = 'nrow chan' + (channel === c.id ? ' active' : '');
     b.innerHTML = `<span class="dot">#</span><span class="tt">${esc(c.name)}</span>`;
-    b.onclick = () => { if (channel !== c.id) { channel = c.id; listAt = 0; void storeSet(`moyu:channel:${COMMUNITY}`, channel); paintChannels(); void pollList(true); } };
+    b.onclick = () => { if (channel !== c.id) { channel = c.id; listAt = 0; void storeSet(`moyu:channel:${community}`, channel); paintChannels(); void pollList(true); } };
     box.appendChild(b);
   }
 };
 
 const paintList = (): void => {
+  paintCommunities();
   paintChannels();
   ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}` : '';
   topicsEl.innerHTML = '';
@@ -242,7 +274,7 @@ const openInSession = async (t: Topic, btn: HTMLButtonElement): Promise<void> =>
   try {
     let th: Thread | null = current?.id === t.id ? thread : null;
     if (!th) {
-      const r = await svc('GET', `/thread?community=${COMMUNITY}&id=${encodeURIComponent(t.id)}&page=1`);
+      const r = await svc('GET', `/thread?community=${community}&id=${encodeURIComponent(t.id)}&page=1`);
       const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
       if (!j.ok || !j.thread) { say(esc(j.error ?? '正文失败')); return; }
       th = j.thread;
@@ -253,7 +285,7 @@ const openInSession = async (t: Topic, btn: HTMLButtonElement): Promise<void> =>
     for (const p of posts) lines.push(`#${p.floor} ${p.author}：`, textOf(p.html), '');
     const digest = lines.join('\n').slice(0, 15000);
     await host.startSession({
-      providerId: `moyu-${COMMUNITY}`, id: t.id, title: t.title, url: t.url, text: digest,
+      providerId: `moyu-${community}`, id: t.id, title: t.title, url: t.url, text: digest,
       navigation: 'open',
     });
     await host.toast({ kind: 'success', message: '已在左侧会话中打开' });
@@ -337,21 +369,21 @@ const paintThread = async (animate: boolean): Promise<void> => {
   const moreBtn = threadEl.querySelector('#more');
   if (moreBtn) (moreBtn as HTMLButtonElement).onclick = () => void openPage(thread!.page + 1, true);
   await hydrateImages(threadEl);
-  const key = `moyu:pos:${COMMUNITY}:${current!.id}`;
+  const key = `moyu:pos:${community}:${current!.id}`;
   void storeSet(key, { page: thread.page });
 };
 
 const pollList = async (force = false): Promise<void> => {
   if (busy || document.hidden) return;
   // 频道以 rail 那边最后一次切换为准（两边共用 storage）
-  const storedCh = (await storeGet(`moyu:channel:${COMMUNITY}`) as string | undefined) ?? '';
-  if (storedCh && storedCh !== channel && INFO.channels.some((c) => c.id === storedCh)) {
+  const storedCh = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
+  if (storedCh && storedCh !== channel && info().channels.some((c) => c.id === storedCh)) {
     channel = storedCh; listAt = 0;
   }
   if (!force && Date.now() - listAt < LIST_TTL && topics.length > 0) return;
   busy = true;
   try {
-    const r = await svc('GET', `/list?community=${COMMUNITY}&channel=${encodeURIComponent(channel)}`);
+    const r = await svc('GET', `/list?community=${community}&channel=${encodeURIComponent(channel)}`);
     const j = JSON.parse(r.body) as { ok: boolean; topics?: Topic[]; error?: string };
     if (!j.ok) { say(esc(j.error ?? '列表失败')); return; }
     say('');
@@ -380,7 +412,7 @@ const openPage = async (page: number, animate: boolean): Promise<void> => {
   threadLoading = true;
   threadEl.innerHTML = `<div style="margin:auto;color:var(--oc-muted,#999);font-size:13px;padding:40px 0">加载中…</div>`;
   try {
-    const r = await svc('GET', `/thread?community=${COMMUNITY}&id=${encodeURIComponent(current.id)}&page=${page}`);
+    const r = await svc('GET', `/thread?community=${community}&id=${encodeURIComponent(current.id)}&page=${page}`);
     const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
     if (!j.ok) { say(esc(j.error ?? '正文失败')); return; }
     say('');
@@ -440,5 +472,5 @@ const fitNarrow = (): void => {
 if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => fitNarrow()).observe(document.documentElement);
 else window.addEventListener('resize', () => fitNarrow());
 fitNarrow();
-void loadPrefs().then(() => { paintChannels(); void pollList(true); });
+void loadPrefs().then(() => { paintCommunities(); paintChannels(); void pollList(true); });
 setInterval(() => void pollList(false), 60_000);

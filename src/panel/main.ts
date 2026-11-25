@@ -83,7 +83,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics');
 
-const BUILD = 'v0.8.1-cstatus';
+const BUILD = 'v0.8.2-clean';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -180,16 +180,8 @@ const paintList = (): void => {
   for (const t of topics) {
     const d = document.createElement('div');
     d.className = 'nrow';
-    const parts: string[] = [];
-    if (t.author) parts.push(esc(t.author));
-    if (t.channel) parts.push(esc(t.channel));
-    if (t.replies !== null) parts.push(`${t.replies}回复`);
-    if (t.time) parts.push(rel(t.time));
-    // 无可抓正文的源标题后挂 ↗（✦ 为标题版总结）
-    const ext = (TITLE_ONLY as readonly string[]).includes(t.community)
-      ? ' <span class="ext" title="该源无可抓正文，✦ 为标题版总结">↗</span>' : '';
     const xcp = t.excerpt ? `<br><span class="xp">${esc(t.excerpt)}</span>` : '';
-    d.innerHTML = `<span class="tt">${esc(t.title)}${ext}${xcp}${parts.length > 0 ? `<br><span class="mm" style="font-size:12px;color:var(--oc-muted,#999)">${parts.join(' · ')}</span>` : ''}</span>`;
+    d.innerHTML = `<span class="tt">${esc(t.title)}${xcp}</span>`;
     const b = document.createElement('button');
     b.className = 'aibtn';
     b.title = 'AI 总结这篇';

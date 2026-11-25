@@ -62,7 +62,8 @@ button:disabled{opacity:.5}
 .msg .who .op{font-size:11px;border:1px solid var(--oc-border,#8888);border-radius:999px;padding:0 7px;color:var(--oc-muted,#999)}
 .msg .bubble{border-radius:12px;padding:9px 13px;word-break:break-word;line-height:1.65}
 .msg.mine{align-items:flex-end}
-.msg.mine .bubble{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883)}
+.msg.mine .who{display:none}
+.msg.mine .bubble{background:var(--oc-elevated,#26292e);border:1px solid var(--oc-border,#8883);max-width:78%}
 .msg.theirs .bubble{padding:9px 2px}
 .msg .body{word-break:break-word}.msg .body img{max-width:100%;border-radius:8px}
 .msg .body a{color:var(--oc-primary-text,var(--oc-primary,#3574f0))}
@@ -134,7 +135,7 @@ const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 const draftEl = $('draft') as unknown as HTMLTextAreaElement;
 const hintEl = $('hint'), posEl = $('pos');
 
-const BUILD = 'v0.2.0-native';
+const BUILD = 'v0.2.1-chat';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -147,6 +148,12 @@ let listAt = 0;
 let current: Topic | null = null;
 let thread: Thread | null = null;
 let busy = false;
+let threadLoading = false;
+
+const paintThreadPlaceholder = (): void => {
+  if (thread || threadLoading) return;
+  threadEl.innerHTML = `<div style="margin:auto;text-align:center;color:var(--oc-muted,#999);font-size:13px;padding:40px 0">从左侧选一个话题开始阅读</div>`;
+};
 
 const say = (html: string): void => { msgEl.innerHTML = html ? `<div class="err">${html}</div>` : ''; };
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -273,7 +280,7 @@ const msgCard = (mine: boolean, author: string, avatar: string, time: number | n
 const paintThread = async (animate: boolean): Promise<void> => {
   threadEl.innerHTML = '';
   posEl.textContent = '';
-  if (!thread) return;
+  if (!thread) { paintThreadPlaceholder(); return; }
   const cards: string[] = [];
   if (thread.opening) cards.push(msgCard(true, thread.opening.author, avatarOf(thread.opening.author, thread.opening.avatar), thread.opening.time, thread.opening.html, thread.opening.byAuthor ? '<span class="op">楼主</span>' : ''));
   thread.posts.forEach((p) => {
@@ -312,6 +319,8 @@ const pollList = async (force = false): Promise<void> => {
     topics = j.topics ?? [];
     listAt = Date.now();
     paintList();
+    // 原生聊天进来即有内容：首次加载自动打开第一帖
+    if (!current && topics.length > 0) { void openTopic(topics[0]!); return; }
   } catch (e) {
     const code = (e as { code?: string })?.code;
     const hint = code === 'NO_SERVICE' ? '（service 没起来：去 设置→扩展 看阅读卡片上的 service 错误）'
@@ -331,6 +340,8 @@ const openTopic = async (t: Topic): Promise<void> => {
 
 const openPage = async (page: number, animate: boolean): Promise<void> => {
   if (!current) return;
+  threadLoading = true;
+  threadEl.innerHTML = `<div style="margin:auto;color:var(--oc-muted,#999);font-size:13px;padding:40px 0">加载中…</div>`;
   try {
     const r = await svc('GET', `/thread?community=${COMMUNITY}&id=${encodeURIComponent(current.id)}&page=${page}`);
     const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
@@ -338,8 +349,10 @@ const openPage = async (page: number, animate: boolean): Promise<void> => {
     say('');
     if (page === 1 || !thread) thread = j.thread!;
     else thread = { ...j.thread!, posts: [...thread.posts, ...j.thread!.posts] };
+    threadLoading = false;
     await paintThread(animate);
   } catch (e) {
+    threadLoading = false;
     const code = (e as { code?: string })?.code;
     say(esc(`正文失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}`));
   }
@@ -420,6 +433,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
+paintThreadPlaceholder();
 $('b-back').onclick = () => { document.body.dataset.view = 'list'; };
 // 窄面板/窄窗：列表/正文二选一（rail 里不硬挤），宽屏忽略 view
 const fitNarrow = (): void => {

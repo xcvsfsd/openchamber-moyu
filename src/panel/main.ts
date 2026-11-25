@@ -128,7 +128,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.5.5-hotcard';
+const BUILD = 'v0.5.6-infoq';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -311,8 +311,8 @@ const msgCard = (mine: boolean, author: string, time: number | null, html: strin
     : `<div class="msg theirs"><div class="bubble"><div class="body">${proxyImg(html)}</div></div><div class="meta">${[esc(author), rel(time), ...tags].filter(Boolean).join('<span class="sep">·</span>')}</div></div>`;
 
 // 帖内链接走宿主浏览器打开（sandbox 里点不开，统一经 openUrl）
-// 热榜原文卡：整块 bubble 可点，直接跳原文（不用精确点中链接文字）
-const HOT: readonly string[] = ['zhihu', 'toutiao', 'csdn', 'oschina', 'infoq'];
+// 热榜原文卡：整块 bubble 可点，直接跳原文（不用精确点中链接文字；InfoQ 有真正在文，不劫持）
+const HOT: readonly string[] = ['zhihu', 'toutiao', 'csdn', 'oschina'];
 threadEl.addEventListener('click', (e) => {
   const a = (e.target as HTMLElement).closest?.('a') as HTMLAnchorElement | null;
   if (a?.href) { e.preventDefault(); void host.openUrl(a.href); return; }

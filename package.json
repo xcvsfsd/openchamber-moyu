@@ -1,6 +1,6 @@
 {
   "name": "openchamber-moyu",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
@@ -21,7 +21,10 @@
         "https://linux.do",
         "https://cdn.ldstatic.com",
         "https://www.v2ex.com",
-        "https://cdn.v2ex.com"
+        "https://cdn.v2ex.com",
+        "https://www.infoq.cn",
+        "https://static001.infoq.cn",
+        "https://static001.geekbang.org"
       ],
       "service": {
         "entry": "service/main.js",

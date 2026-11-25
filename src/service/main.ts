@@ -272,6 +272,7 @@ const infoqList = async (proxy?: string | null): Promise<Topic[]> => {
 };
 
 // 热榜正文=原文链接卡（无评论）：从 3 分钟列表缓存里按序号取，缓存未命中就现拉
+// tophub 四榜（知乎/头条/CSDN/开源中国）原文页均有反爬（验证/403/纯 JS 壳），只给转跳卡。
 const hotThread = async (community: CommunityId, id: string, proxy?: string | null): Promise<Thread> => {
   if (!/^\d{1,12}$/.test(id)) throw new Error('请求的参数不对（id）');
   const topics = (await cachedList(community, 'hot', proxy)).topics;
@@ -280,7 +281,46 @@ const hotThread = async (community: CommunityId, id: string, proxy?: string | nu
   const safeUrl = t.url.replace(/&/g, '&amp;');
   const opening: Post = {
     floor: 0, author: '', avatar: null,
-    html: `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`,
+    html: `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`,
+    time: null, replyTo: null, likes: null, byAuthor: true,
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+
+// InfoQ 正文直抽：文章页 Nuxt SSR，<div class="ProseMirror"> 即正文体
+const infoqThread = async (id: string, proxy?: string | null): Promise<Thread> => {
+  if (!/^\d{1,12}$/.test(id)) throw new Error('请求的参数不对（id）');
+  const topics = (await cachedList('infoq', 'hot', proxy)).topics;
+  const t = topics[Number(id) - 1];
+  if (!t) throw new Error('帖子不存在');
+  const safeUrl = t.url.replace(/&/g, '&amp;');
+  const linkCard = `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  let r;
+  try {
+    r = await timedFetch(t.url, proxy);
+  } catch {
+    throw new Error('InfoQ 正文连不上，按 R 重试，或点下方链接去浏览器看');
+  }
+  if (r.status !== 200) throw new Error(`InfoQ 返回了 ${r.status}`);
+  const body = await r.text();
+  const start = body.indexOf('<div class="ProseMirror">');
+  if (start < 0) {
+    const opening: Post = {
+      floor: 0, author: '', avatar: null, html: linkCard,
+      time: null, replyTo: null, likes: null, byAuthor: true,
+    };
+    return { topic: t, opening, posts: [], page: 1, more: false };
+  }
+  let k = start, depth = 0;
+  while (k < body.length) {
+    if (body.startsWith('<div', k)) { depth++; k = body.indexOf('>', k) + 1; if (k === 0) break; }
+    else if (body.startsWith('</div>', k)) { depth--; k += 6; if (depth === 0) break; }
+    else k++;
+  }
+  const inner = absLinks(body.slice(start, k), 'https://www.infoq.cn');
+  const opening: Post = {
+    floor: 0, author: '', avatar: null,
+    html: `${inner}${linkCard}`,
     time: null, replyTo: null, likes: null, byAuthor: true,
   };
   return { topic: t, opening, posts: [], page: 1, more: false };
@@ -359,6 +399,7 @@ const server = http.createServer((req, res) => {
     const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
     const px = proxyOf(req, url) ?? undefined;
     (async () => {
+      if (community === 'infoq') return infoqThread(id, px);
       if ((HOT_IDS as readonly string[]).includes(community)) return hotThread(community, id, px);
       return community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     })().then(
@@ -373,7 +414,7 @@ const server = http.createServer((req, res) => {
     const src = url.searchParams.get('url') ?? '';
     let u: URL;
     try { u = new URL(src); } catch { return json(res, 400, { ok: false, error: 'bad-url' }); }
-    const allowed = /^(linux\.do|cdn\.ldstatic\.com|.*\.v2ex\.com|v2ex\.com)$/.test(u.hostname);
+    const allowed = /^(linux\.do|cdn\.ldstatic\.com|.*\.v2ex\.com|v2ex\.com|.*\.infoq\.cn|static001\.geekbang\.org)$/.test(u.hostname);
     if (u.protocol !== 'https:' || !allowed) return json(res, 400, { ok: false, error: 'bad-host' });
     (async () => {
       await pace();

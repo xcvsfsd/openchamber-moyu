@@ -605,7 +605,67 @@ var hotThread = async (community, id, proxy) => {
     floor: 0,
     author: "",
     avatar: null,
-    html: `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`,
+    html: `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`,
+    time: null,
+    replyTo: null,
+    likes: null,
+    byAuthor: true
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+var infoqThread = async (id, proxy) => {
+  if (!/^\d{1,12}$/.test(id))
+    throw new Error("请求的参数不对（id）");
+  const topics = (await cachedList("infoq", "hot", proxy)).topics;
+  const t = topics[Number(id) - 1];
+  if (!t)
+    throw new Error("帖子不存在");
+  const safeUrl = t.url.replace(/&/g, "&amp;");
+  const linkCard = `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  let r;
+  try {
+    r = await timedFetch(t.url, proxy);
+  } catch {
+    throw new Error("InfoQ 正文连不上，按 R 重试，或点下方链接去浏览器看");
+  }
+  if (r.status !== 200)
+    throw new Error(`InfoQ 返回了 ${r.status}`);
+  const body = await r.text();
+  const start = body.indexOf('<div class="ProseMirror">');
+  if (start < 0) {
+    const opening2 = {
+      floor: 0,
+      author: "",
+      avatar: null,
+      html: linkCard,
+      time: null,
+      replyTo: null,
+      likes: null,
+      byAuthor: true
+    };
+    return { topic: t, opening: opening2, posts: [], page: 1, more: false };
+  }
+  let k = start, depth = 0;
+  while (k < body.length) {
+    if (body.startsWith("<div", k)) {
+      depth++;
+      k = body.indexOf(">", k) + 1;
+      if (k === 0)
+        break;
+    } else if (body.startsWith("</div>", k)) {
+      depth--;
+      k += 6;
+      if (depth === 0)
+        break;
+    } else
+      k++;
+  }
+  const inner = absLinks(body.slice(start, k), "https://www.infoq.cn");
+  const opening = {
+    floor: 0,
+    author: "",
+    avatar: null,
+    html: `${inner}${linkCard}`,
     time: null,
     replyTo: null,
     likes: null,
@@ -693,6 +753,8 @@ var server = http.createServer((req, res) => {
     const page = Math.max(1, Number(url.searchParams.get("page") ?? "1") || 1);
     const px = proxyOf(req, url) ?? undefined;
     (async () => {
+      if (community === "infoq")
+        return infoqThread(id, px);
       if (HOT_IDS.includes(community))
         return hotThread(community, id, px);
       return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
@@ -707,7 +769,7 @@ var server = http.createServer((req, res) => {
     } catch {
       return json(res, 400, { ok: false, error: "bad-url" });
     }
-    const allowed = /^(linux\.do|cdn\.ldstatic\.com|.*\.v2ex\.com|v2ex\.com)$/.test(u.hostname);
+    const allowed = /^(linux\.do|cdn\.ldstatic\.com|.*\.v2ex\.com|v2ex\.com|.*\.infoq\.cn|static001\.geekbang\.org)$/.test(u.hostname);
     if (u.protocol !== "https:" || !allowed)
       return json(res, 400, { ok: false, error: "bad-host" });
     (async () => {

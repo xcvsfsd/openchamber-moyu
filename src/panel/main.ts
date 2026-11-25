@@ -85,13 +85,14 @@ button:disabled{opacity:.5}
 /* 窄 rail：列表态只留目录（main 整个隐藏，无空白）；看正文切 thread 视图 */
 body[data-narrow="1"] #app{flex-direction:column}
 body[data-narrow="1"] aside{width:100%;max-width:none;max-height:none;border-bottom:none;padding:6px;flex:1;min-height:0}
-body[data-narrow="1"] #chanrow,body[data-narrow="1"] #chanrow2{display:flex;overflow-x:auto;scrollbar-width:none}
-body[data-narrow="1"] #chanrow::-webkit-scrollbar,body[data-narrow="1"] #chanrow2::-webkit-scrollbar{display:none}
-body[data-narrow="1"] #chanrow > div,body[data-narrow="1"] #chanrow2 > div{display:flex;gap:4px}
+body[data-narrow="1"] #chanrow > div,body[data-narrow="1"] #chanrow2 > div{display:flex;gap:4px;flex-wrap:wrap}
 body[data-narrow="1"] main{border-left:none;min-height:0}
 body[data-narrow="1"][data-view="list"] main{display:none}
 body[data-narrow="1"][data-view="thread"] aside{display:none}
 body[data-narrow="1"] #b-back{display:inline-block}
+#msg2:empty{display:none}
+#msg2{padding:4px 10px}#msg2 .err{margin-top:4px}
+div.nrow:hover{background:var(--oc-hover,#8881)}
 #b-back{display:none}
 #threadbar{display:none;padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);align-items:center;gap:8px}
 body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
@@ -105,7 +106,7 @@ body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
 <aside>
   <div class="sec">社区</div><div id="chanrow"><div id="communities"></div></div>
   <div class="sec">频道</div><div id="chanrow2"><div id="channels"></div></div>
-  <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="topics"></div>
+  <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="msg2"></div><div id="topics"></div>
   <div class="sec">配置</div>
   <div id="cfgside">
     <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
@@ -146,7 +147,11 @@ const paintThreadPlaceholder = (): void => {
   threadEl.innerHTML = `<div style="margin:auto;text-align:center;color:var(--oc-muted,#999);font-size:13px;padding:40px 0">从左侧选一个话题开始阅读</div>`;
 };
 
-const say = (html: string): void => { msgEl.innerHTML = html ? `<div class="err">${html}</div>` : ''; };
+const say = (html: string): void => {
+  msgEl.innerHTML = html ? `<div class="err">${html}</div>` : '';
+  const m2 = document.querySelector('#msg2');
+  if (m2) m2.innerHTML = msgEl.innerHTML;
+};
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const rel = (t: number | null): string => {
   if (!t) return '';

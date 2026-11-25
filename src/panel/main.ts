@@ -1,8 +1,8 @@
-// 阅读：七源话题列表 + 按需 AI 总结。
-// 列表只读；点 ✦ 拉正文（走 service），本机小模型总结后行内展开；无详情页。
+// 阅读：融合信息流 + AI 分类 + 按需 AI 总结（无详情页）。
+// 一次拉全社区全频道，标题列表按 AI 分类成组；点 ✦ 拉正文总结。
 import { connectHost } from '@openchamber/sdk';
 import { applyHostReady } from '@openchamber/sdk/ui';
-import type { CommunityId, CommunityInfo, Thread, Topic } from '../shared/types.js';
+import type { CommunityId, Thread, Topic } from '../shared/types.js';
 import { COMMUNITIES } from '../shared/types.js';
 
 // 全局报错浮层：宿主里出任何异常都写进 #msg2，空白页时也能定位
@@ -19,11 +19,15 @@ window.addEventListener('unhandledrejection', (e) => {
   showBootErrors();
 });
 
-let community: CommunityId = 'v2ex';
-// 无可抓正文的源（反爬墙）：✦ 退化为标题版总结，标题后挂 ↗ 示意
+// 无可抓正文的源：✦ 先联网搜索再总结（标题版兜底）
 const TITLE_ONLY: readonly string[] = ['zhihu', 'toutiao', 'csdn'];
-const info = (): CommunityInfo => COMMUNITIES.find((c) => c.id === community)!;
+// AI 分类候选（固定集合，避免碎片化）
+const CATS = ['AI科技', '数码', '互联网', '财经', '时政', '社会', '娱乐', '体育', '汽车', '房产', '教育', '健康', '科学', '游戏', '其他'];
 const LIST_TTL = 3 * 60 * 1000;
+const PER_PAIR = 12; // 每个社区频道最多取几条（19 个榜单，控制总量）
+const CAT_BATCH = 25; // 一次分类几条标题
+
+type Item = Topic & { src: string };
 
 const host = connectHost();
 const root = document.querySelector<HTMLElement>('#app');
@@ -39,18 +43,15 @@ aside{width:100%;display:flex;flex-direction:column;padding:10px 8px;gap:2px;ove
 .sec{font-size:12px;color:var(--oc-muted,#999);padding:8px 10px 4px}
 .nrow{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);font:inherit}
 .nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere}
-.nrow .mm{font-size:12px;color:var(--oc-muted,#999);white-space:nowrap}
-.nrow .ext{color:var(--oc-muted,#999);font-size:12px;white-space:nowrap;margin-left:4px}
+.nrow .src{display:block;font-size:11.5px;color:var(--oc-muted,#999);margin-top:1px}
 .nrow .aibtn{flex:0 0 auto;align-self:center;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 9px;white-space:nowrap}
 .nrow .aibtn:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 .nrow .aisum{flex:1 1 100%;font-size:12.5px;line-height:1.7;opacity:.92;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
 .nrow .xp{display:block;font-size:12.5px;opacity:.8;margin-top:1px}
-.nrow.chan .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nrow.chan .dot{color:var(--oc-muted,#999)}
-#chanrow > div,#chanrow2 > div{display:flex;gap:4px;flex-wrap:wrap}
-button.nrow:hover{background:var(--oc-hover,#8881)}
-.nrow.active{background:var(--oc-hover,#8882)}
-div.nrow:hover{background:var(--oc-hover,#8881)}
+.cathead{font-size:12px;color:var(--oc-muted,#999);padding:10px 10px 2px;font-weight:700}
+#catchips{display:flex;gap:6px;flex-wrap:wrap;padding:2px 10px 4px}
+#catchips button{border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 10px;white-space:nowrap}
+#catchips button.on{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 button,select,input,textarea{font:inherit}
 .btn{padding:4px 10px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:var(--oc-fg,inherit);cursor:pointer;white-space:nowrap}
 button:disabled{opacity:.5}
@@ -59,15 +60,14 @@ button:disabled{opacity:.5}
 #msg2{padding:4px 10px}#msg2 .err{margin-top:4px}
 .err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
 .mut{font-size:12px;color:var(--oc-muted,#999)}
+div.nrow:hover{background:var(--oc-hover,#8881)}
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
 #cfgver{padding:2px 10px 6px;font-size:11px}
 </style>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
-  <div class="sec">社区</div><div id="chanrow"><div id="communities"></div></div>
-  <div class="sec" id="sec-channels">频道</div><div id="chanrow2"><div id="channels"></div></div>
-  <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="msg2"></div><div id="topics"></div>
+  <div class="sec">话题 <span id="tcount" class="mut"></span></div><div id="msg2"></div><div id="catchips"></div><div id="topics"></div>
   <div class="sec">配置</div>
   <div id="cfgside">
     <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
@@ -82,118 +82,146 @@ button:disabled{opacity:.5}
 const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${id}`) as T;
 const cname = $('cname');
 const topicsEl = $('topics');
+const chipsEl = $('catchips');
 
-const BUILD = 'v0.8.3-websearch';
+const BUILD = 'v0.9.0-fused';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
 let proxy = '';
-let channel = info().channels[0]!.id;
-let topics: Topic[] = [];
+let topics: Item[] = [];
+let failed: string[] = [];
 let listAt = 0;
 let busy = false;
-// 社区可用性：列表拉失败就标 ⚠（tooltip 见错因），成功即摘掉；只记访问过的
-const commErr = new Map<CommunityId, string>();
+let feedRun = 0;
+// 分类：内存 + storage 双缓存（标题键），失败的源不阻塞
+const catMem = new Map<string, string>();
+let catsOff = false;
+let selCat = '';
 
 const say = (html: string): void => {
   const m2 = document.querySelector('#msg2');
   if (m2) m2.innerHTML = html ? `<div class="err">${html}</div>` : '';
 };
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const rel = (t: number | null): string => {
-  if (!t) return '';
-  const d = Date.now() - t;
-  if (d < 60_000) return '刚刚'; if (d < 3600_000) return `${Math.floor(d / 60_000)} 分钟前`;
-  if (d < 86400_000) return `${Math.floor(d / 3600_000)} 小时前`;
-  return new Date(t).toLocaleDateString();
-};
 
 const storeGet = async (k: string): Promise<unknown> => { try { return await host.storage.get(k); } catch { return undefined; } };
 const storeSet = async (k: string, v: unknown): Promise<void> => { try { await host.storage.set(k, v as never); } catch { /* 忽略，页内保持 */ } };
 
 const svc = async (method: string, path: string, body?: string): Promise<{ status: number; body: string }> => {
-  // 代理跟每个请求走（service 读不到宿主 env），?proxy= 与 x-proxy 等价，这里统一拼 query
+  // 代理跟每个请求走（service 读不到宿主 env），?proxy= 与 x-proxy 等价这里统一拼 query
   let p = path;
   if (proxy && method === 'GET' && p.startsWith('/')) p += (p.includes('?') ? '&' : '?') + `proxy=${encodeURIComponent(proxy)}`;
   return host.serviceRequest({ method: method as 'GET' | 'POST', path: p, body });
 };
 
-const loadPrefs = async (): Promise<void> => {
-  const savedC = (await storeGet('moyu:community') as CommunityId | undefined) ?? 'v2ex';
-  if (COMMUNITIES.some((c) => c.id === savedC)) community = savedC;
-  proxy = (await storeGet('moyu:proxy') as string | undefined) ?? '';
-  (document.querySelector('#cfg-proxy') as HTMLInputElement).value = proxy;
-  const ch = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
-  channel = info().channels[0]!.id;
-  if (ch && info().channels.some((c) => c.id === ch)) channel = ch;
-};
+const srcName = (c: { name: string }, ch: { name: string }, multi: boolean): string =>
+  multi ? `${c.name}·${ch.name}` : c.name;
 
-const paintCommunities = (): void => {
-  const box = $('communities');
-  box.innerHTML = '';
-  for (const c of COMMUNITIES) {
+const paintChips = (cats: string[]): void => {
+  chipsEl.innerHTML = '';
+  if (cats.length === 0) return;
+  const all = document.createElement('button');
+  all.textContent = '全部';
+  all.className = selCat === '' ? 'on' : '';
+  all.onclick = () => { selCat = ''; paintList(); };
+  chipsEl.appendChild(all);
+  for (const c of cats) {
     const b = document.createElement('button');
-    b.className = 'nrow chan' + (community === c.id ? ' active' : '');
-    const bad = commErr.get(c.id);
-    const mark = bad ? ` <span class="ext" title="${esc(bad)}">⚠</span>` : '';
-    b.innerHTML = `<span class="dot">●</span><span class="tt">${esc(c.name)}${mark}</span>`;
-    b.onclick = () => { if (community !== c.id) void switchCommunity(c.id); };
-    box.appendChild(b);
+    const n = topics.filter((t) => catMem.get(ckey(t)) === c).length;
+    b.textContent = `${c} ${n}`;
+    b.className = selCat === c ? 'on' : '';
+    b.onclick = () => { selCat = selCat === c ? '' : c; paintList(); };
+    chipsEl.appendChild(b);
   }
 };
 
-const switchCommunity = async (id: CommunityId): Promise<void> => {
-  community = id;
-  await storeSet('moyu:community', community);
-  channel = info().channels[0]!.id;
-  topics = []; listAt = 0;
-  (document.querySelector('#cfg-out') as HTMLElement).textContent = '';
-  const ch = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
-  if (ch && info().channels.some((c) => c.id === ch)) channel = ch;
-  paintCommunities();
-  paintList();
-  void pollList(true);
-};
-
-const paintChannels = (): void => {
-  // 单频道的源（榜单类）藏起整行，只剩一个选项没有意义
-  const single = info().channels.length <= 1;
-  ($('sec-channels') as HTMLElement).style.display = single ? 'none' : '';
-  ($('chanrow2') as HTMLElement).style.display = single ? 'none' : '';
-  if (single) return;
-  const box = $('channels');
-  box.innerHTML = '';
-  for (const c of info().channels) {
-    const b = document.createElement('button');
-    b.className = 'nrow chan' + (channel === c.id ? ' active' : '');
-    b.innerHTML = `<span class="dot">#</span><span class="tt">${esc(c.name)}</span>`;
-    b.onclick = () => { if (channel !== c.id) { channel = c.id; listAt = 0; void storeSet(`moyu:channel:${community}`, channel); paintChannels(); void pollList(true); } };
-    box.appendChild(b);
-  }
-};
+const ckey = (t: Topic): string => `moyu:cat:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
 
 const paintList = (): void => {
-  paintCommunities();
-  paintChannels();
-  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}` : '';
+  const present = [...new Set(topics.map((t) => catMem.get(ckey(t))).filter((c): c is string => !!c))];
+  const ordered = CATS.filter((c) => present.includes(c));
+  paintChips(ordered);
+  const fail = failed.length > 0 ? ` · ${failed.join('、')}暂不可用` : '';
+  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}${fail}` : fail.replace(/^ · /, '');
   topicsEl.innerHTML = '';
-  for (const t of topics) {
-    const d = document.createElement('div');
-    d.className = 'nrow';
-    const xcp = t.excerpt ? `<br><span class="xp">${esc(t.excerpt)}</span>` : '';
-    d.innerHTML = `<span class="tt">${esc(t.title)}${xcp}</span>`;
-    const b = document.createElement('button');
-    b.className = 'aibtn';
-    b.title = 'AI 总结这篇';
-    b.textContent = '✦';
-    b.onclick = () => void summarize(t, d, b);
-    d.appendChild(b);
-    topicsEl.appendChild(d);
+  const groups = selCat ? [selCat] : ordered.length > 0 ? ordered : [''];
+  for (const g of groups) {
+    if (!selCat && g) {
+      const h = document.createElement('div');
+      h.className = 'cathead';
+      h.textContent = g;
+      topicsEl.appendChild(h);
+    }
+    for (const t of topics) {
+      if (g && catMem.get(ckey(t)) !== g) continue;
+      const d = document.createElement('div');
+      d.className = 'nrow';
+      const xcp = t.excerpt ? `<br><span class="xp">${esc(t.excerpt)}</span>` : '';
+      d.innerHTML = `<span class="tt">${esc(t.title)}<br><span class="src">${esc(t.src)}</span>${xcp}</span>`;
+      const b = document.createElement('button');
+      b.className = 'aibtn';
+      b.title = 'AI 总结这篇';
+      b.textContent = '✦';
+      b.onclick = () => void summarize(t, d, b);
+      d.appendChild(b);
+      topicsEl.appendChild(d);
+    }
+  }
+};
+
+// AI 分类：25 条一批调小模型，按标题归类；结果按标题缓存，失败静默（保持无分组列表）
+const classifyAll = async (run: number): Promise<void> => {
+  if (catsOff) return;
+  const pending = topics.filter((t) => !catMem.has(ckey(t)));
+  for (let i = 0; i < pending.length; i += CAT_BATCH) {
+    if (run !== feedRun) return;
+    const batch = pending.slice(i, i + CAT_BATCH);
+    const hits = await Promise.all(batch.map(async (t) => {
+      const h = await storeGet(ckey(t));
+      return typeof h === 'string' && h ? h : '';
+    }));
+    const uncached = batch.filter((_, j) => !hits[j]);
+    if (uncached.length > 0) {
+      try {
+        const lines = uncached.map((t, j) => `${j}. ${t.title}`).join('\n').slice(0, 3000);
+        const g = await host.generate({
+          system: `你是中文新闻分类器。把每条标题归入以下恰好一个分类：${CATS.join('、')}。只输出每行“序号:分类”，无多余文字。`,
+          prompt: lines,
+          maxOutputTokens: 256,
+        });
+        const got: string[] = [];
+        for (const ln of g.text.split('\n')) {
+          const m = /^\s*(\d+)\s*[:：]\s*(\S+)/.exec(ln);
+          if (!m) continue;
+          const cat = CATS.includes(m[2]!) ? m[2]! : '其他';
+          got[Number(m[1])] = cat;
+        }
+        await Promise.all(uncached.map(async (t, j) => {
+          const cat = got[j] ?? '其他';
+          catMem.set(ckey(t), cat);
+          await storeSet(ckey(t), cat);
+        }));
+      } catch (e) {
+        const code = (e as { code?: string })?.code;
+        if (code === 'NO_MODEL' || code === 'MODEL_FAILED') {
+          catsOff = true;
+          say(esc(code === 'NO_MODEL' ? '无可用小模型，AI 分类关闭（列表照常）' : '小模型出错，AI 分类暂停（列表照常）'));
+          return;
+        }
+        // 单批失败：全标其他，不重试
+        for (const t of uncached) catMem.set(ckey(t), '其他');
+      }
+    } else {
+      batch.forEach((t, j) => catMem.set(ckey(t), hits[j]!));
+    }
+    if (run !== feedRun) return;
+    paintList();
   }
 };
 
 // 按需 AI 总结：点 ✦ 拉正文（走 service），用小模型总结后展开在行内；结果按话题缓存。
-// 无可抓正文的源退化为标题版总结（明确标注）。
+// 无可抓正文的源先联网搜索再总结，搜不到才退化为标题版。
 const htmlText = (html: string): string =>
   html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n').replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"')
@@ -201,7 +229,7 @@ const htmlText = (html: string): string =>
 const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Promise<void> => {
   const old = row.querySelector('.aisum');
   if (old) { old.remove(); return; } // 再点收起
-  const key = `moyu:csum:${community}:${t.id}`;
+  const key = `moyu:csum:${t.community}:${t.id}`;
   btn.disabled = true;
   const label = btn.textContent;
   btn.textContent = '…';
@@ -209,7 +237,7 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
     const hit = await storeGet(key);
     let s = typeof hit === 'string' && hit ? hit : '';
     if (!s) {
-      const r = await svc('GET', `/thread?community=${community}&id=${encodeURIComponent(t.id)}&page=1`);
+      const r = await svc('GET', `/thread?community=${t.community}&id=${encodeURIComponent(t.id)}&page=1`);
       const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
       if (!j.ok || !j.thread) throw new Error(j.error ?? '正文失败');
       const th = j.thread;
@@ -224,7 +252,7 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
           const sj = JSON.parse(sr.body) as { ok: boolean; results?: Array<{ title: string; snippet: string; site: string }>; error?: string };
           if (sj.ok && sj.results && sj.results.length > 0) {
             const ctx = sj.results.slice(0, 5)
-              .map((r, i) => `${i + 1}. 「${r.title}」${r.snippet}${r.site ? `（${r.site}）` : ''}`)
+              .map((x, i) => `${i + 1}. 「${x.title}」${x.snippet}${x.site ? `（${x.site}）` : ''}`)
               .join('\n').slice(0, 2500);
             const g = await host.generate({
               system: '你是中文热点总结助手。根据多条搜索结果（标题+摘要），用2-4句话概括这件事的核心信息；只写多数来源一致的内容，不确定的加“据报道”；严禁编造；只输出总结。',
@@ -239,7 +267,7 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
         } else {
           const g = await host.generate({
             system: '你是中文标题提炼助手。只根据帖子标题和版块信息，用一句话（不超过40字）概括它在讨论什么；严禁编造标题里没有的具体事实；只输出这一句话。',
-            prompt: `【${info().name}/${t.channel ?? ''}】${t.title}`,
+            prompt: `【${t.title}】`,
             maxOutputTokens: 64,
           });
           s = g.text.trim().slice(0, 80);
@@ -276,39 +304,39 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
   }
 };
 
-const pollList = async (force = false): Promise<void> => {
+const pollAll = async (force = false): Promise<void> => {
   if (busy || document.hidden) return;
-  // 频道以最后一次切换为准（两边共用 storage）
-  const storedCh = (await storeGet(`moyu:channel:${community}`) as string | undefined) ?? '';
-  if (storedCh && storedCh !== channel && info().channels.some((c) => c.id === storedCh)) {
-    channel = storedCh; listAt = 0;
-  }
   if (!force && Date.now() - listAt < LIST_TTL && topics.length > 0) return;
   busy = true;
+  const run = ++feedRun;
   try {
-    const r = await svc('GET', `/list?community=${community}&channel=${encodeURIComponent(channel)}`);
-    const j = JSON.parse(r.body) as { ok: boolean; topics?: Topic[]; error?: string };
-    if (!j.ok) {
-      const msg = j.error ?? '列表失败';
-      commErr.set(community, msg);
-      paintCommunities();
-      say(esc(msg));
-      return;
-    }
-    say('');
-    commErr.delete(community);
-    topics = j.topics ?? [];
+    const pairs = COMMUNITIES.flatMap((c) => c.channels.map((ch) => ({ c, ch })));
+    topics = []; failed = [];
+    ($('tcount') as HTMLElement).textContent = `加载中 0/${pairs.length}`;
+    topicsEl.innerHTML = '';
+    chipsEl.innerHTML = '';
+    await Promise.all(pairs.map(async ({ c, ch }) => {
+      try {
+        const r = await svc('GET', `/list?community=${c.id}&channel=${encodeURIComponent(ch.id)}`);
+        const j = JSON.parse(r.body) as { ok: boolean; topics?: Topic[]; error?: string };
+        if (!j.ok) throw new Error(j.error ?? '列表失败');
+        if (run !== feedRun) return;
+        const items: Item[] = (j.topics ?? []).slice(0, PER_PAIR)
+          .map((t) => ({ ...t, src: srcName(c, ch, c.channels.length > 1) }));
+        topics.push(...items);
+        if (run !== feedRun) return;
+        ($('tcount') as HTMLElement).textContent = `加载中 ${topics.length} · 已回 ${pairs.length - failed.length}/${pairs.length}`;
+        paintList();
+      } catch {
+        if (run !== feedRun) return;
+        if (!failed.includes(c.name)) failed.push(c.name);
+      }
+    }));
+    if (run !== feedRun) return;
     listAt = Date.now();
+    say(failed.length > 0 ? esc(`${failed.join('、')}暂不可用（多为对侧限流过一会儿按 R 再试）`) : '');
     paintList();
-  } catch (e) {
-    const code = (e as { code?: string })?.code;
-    const hint = code === 'NO_SERVICE' ? '（service 没起来：去 设置→扩展 看阅读卡片上的 service 错误）'
-      : code === 'NOT_GRANTED' ? '（service 能力没批准：重装时勾上）' : '';
-    const msg = `列表失败${code ? ` [${code}]` : ''}：${e instanceof Error ? e.message : '未知错误'}${hint}`;
-    commErr.set(community, msg);
-    paintCommunities();
-    say(esc(msg));
-    return;
+    void classifyAll(run);
   } finally { busy = false; }
 };
 
@@ -319,7 +347,7 @@ $('b-save').onclick = async () => {
   await storeSet('moyu:proxy', proxy);
   $('cfg-out').textContent = '已保存，正在测试…';
   listAt = 0;
-  await pollList(true);
+  await pollAll(true);
   $('cfg-out').textContent = topics.length > 0 ? `连通（${topics.length} 条）` : '仍失败，看列表上方红字（可能是代理地址不对或要认证）';
 };
 
@@ -329,23 +357,20 @@ document.addEventListener('keydown', (e) => {
   if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
   // 带 Ctrl/Cmd/Alt 的组合键一律不碰，留给宿主和浏览器
   if (e.altKey || e.ctrlKey || e.metaKey) return;
-  if (e.key === 'r') { void pollList(true); }
+  if (e.key === 'r') { void pollAll(true); }
   else if (e.key === 'q') { void host.close(); }
 });
 let escCount = 0;
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { escCount++; if (escCount >= 2) { escCount = 0; void host.close(); } setTimeout(() => (escCount = 0), 500); }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollAll(false); });
+
+const loadPrefs = async (): Promise<void> => {
+  proxy = (await storeGet('moyu:proxy') as string | undefined) ?? '';
+  (document.querySelector('#cfg-proxy') as HTMLInputElement).value = proxy;
+};
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
-// 窄 rail 自适应（单列列表，无详情列）
-const fitNarrow = (): void => {
-  const w = document.documentElement.clientWidth;
-  document.body.dataset.narrow = w > 0 && w < 700 ? '1' : '';
-};
-if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => fitNarrow()).observe(document.documentElement);
-else window.addEventListener('resize', () => fitNarrow());
-fitNarrow();
-void loadPrefs().then(() => { paintCommunities(); paintChannels(); void pollList(true); });
-setInterval(() => void pollList(false), 60_000);
+void loadPrefs().then(() => void pollAll(true));
+setInterval(() => void pollAll(false), 60_000);

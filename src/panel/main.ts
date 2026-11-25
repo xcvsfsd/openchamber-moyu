@@ -97,9 +97,6 @@ body[data-narrow="1"] #b-back{display:inline-block}
 #threadbar{display:none;padding:8px 12px;border-bottom:1px solid var(--oc-border,#8883);align-items:center;gap:8px}
 body[data-narrow="1"][data-view="thread"] #threadbar{display:flex}
 #threadbar .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--oc-muted,#999);font-size:12px}
-/* 老板键（B）：帖子/正文全藏，只留无害的配置区 */
-body[data-boss="1"] #chanrow,body[data-boss="1"] #topics,body[data-boss="1"] aside .sec,body[data-boss="1"] main{display:none!important}
-body[data-boss="1"] aside{width:100%;max-width:none;border-bottom:none;flex:1}
 
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
@@ -116,7 +113,7 @@ body[data-boss="1"] aside{width:100%;max-width:none;border-bottom:none;flex:1}
     <button class="btn primary" id="b-save">保存并测试</button>
     <div class="mut" id="cfg-out"></div>
   </div>
-  <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span><br>B 藏/显 · R 刷新 · O 打开 · J/K 翻页</div>
+  <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span><br>R 刷新 · O 打开 · J/K 翻页</div>
 </aside>
 <main>
   <div id="threadbar"><button class="btn" id="b-back" title="返回列表">‹</button><span class="tt" id="topic-crumb"></span></div>
@@ -129,7 +126,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${i
 const cname = $('cname');
 const topicsEl = $('topics'), threadEl = $('thread'), msgEl = $('msg');
 
-const BUILD = 'v0.3.10-bosshint';
+const BUILD = 'v0.3.11-noboss';
 cname.textContent = INFO.name === 'linux.do' ? '阅读 L' : '阅读 V';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -409,15 +406,12 @@ $('b-save').onclick = async () => {
   $('cfg-out').textContent = topics.length > 0 ? `连通（${topics.length} 条）` : '仍失败，看列表上方红字（可能是代理地址不对或要认证）';
 };
 
-// 快捷键（只读页；输入框聚焦时只有 Alt+Q 老板键生效）
+// 快捷键（只读页；输入框聚焦时不触发）
 document.addEventListener('keydown', (e) => {
-  // 老板键别名：宿主快捷键在 iframe 里收不到，Alt+Q 在面板内直接藏帖
-  if (e.altKey && (e.key === 'q' || e.key === 'Q')) { e.preventDefault(); toggleBoss(); return; }
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
   // 带 Ctrl/Cmd/Alt 的组合键一律不碰，留给宿主和浏览器
   if (e.altKey || e.ctrlKey || e.metaKey) return;
-  if (e.key === 'b' || e.key === 'B') { toggleBoss(); return; }
   if (e.key === 'j' || e.key === 'k') {
     if (!topics.length) return;
     const i = topics.findIndex((t) => t.id === current?.id);
@@ -435,14 +429,6 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollList(false); });
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
-// 老板键：记住进面板前的工作会话，按 B 瞬间藏帖（只留配置），全屏页顺手切回工作会话，再按 B 恢复
-let lastSession: string | null = null;
-host.onSession((s) => { if (s?.id) lastSession = s.id; });
-const toggleBoss = (): void => {
-  const on = document.body.dataset.boss !== '1';
-  document.body.dataset.boss = on ? '1' : '';
-  if (on && !isNarrow() && lastSession) void host.openSession(lastSession).catch(() => undefined);
-};
 paintThreadPlaceholder();
 $('b-back').onclick = () => { document.body.dataset.view = 'list'; };
 // 窄 rail 只做导航器（main 隐藏），宽页只做阅读器（aside 隐藏）

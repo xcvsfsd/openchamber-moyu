@@ -42,6 +42,10 @@ body{margin:0;font:14px/1.6 var(--oc-font,system-ui,sans-serif);background:var(-
 #app{display:flex;height:100vh;overflow:hidden;background:var(--oc-bg,#1b1e22);color:var(--oc-fg,inherit);position:relative}
 aside{width:100%;display:flex;flex-direction:column;padding:10px 8px;gap:2px;overflow-y:auto}
 .sec{font-size:12px;color:var(--oc-muted,#999);padding:8px 10px 4px}
+#topicbar{display:flex;align-items:center;gap:6px;padding:8px 10px 4px}
+#topicbar .spacer{flex:1}
+.btn.icon{padding:2px 7px;line-height:1.3}
+#settingswrap[hidden]{display:none}
 .nrow{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);font:inherit}
 .nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere;opacity:.8}
 .nrow .xp{display:block;font-size:12.5px;opacity:.6;margin-top:1px}
@@ -78,21 +82,23 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
 </style>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
-  <div class="sec">话题 <span id="tcount" class="mut"></span> <button class="btn" id="b-refresh" title="手动刷新">↻</button></div><div id="catchips"></div><div id="topics"></div><div id="msg2"></div><div class="mut" id="srcerr" style="padding:2px 10px"></div>
-  <div class="sec">配置</div>
-  <div id="cfgside">
-    <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
-    <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" />
-    <button class="btn primary" id="b-save">保存并测试</button>
-    <div class="mut">AI 模型（分类与总结用；与设置里的小模型是同一份配置，改完立即生效）</div>
-    <select id="cfg-model"><option value="__default">读取中…</option></select>
-    <div class="mut" id="model-out"></div>
-    <button class="btn" id="b-clearcache" title="删掉分类与总结缓存，用当前模型重算">清空 AI 缓存</button>
-    <div class="mut" id="cfg-out"></div>
+  <div class="sec" id="topicbar">话题 <span id="tcount" class="mut"></span><span class="spacer"></span><button class="btn icon" id="b-refresh" title="手动刷新">↻</button><button class="btn icon" id="b-settings" title="设置与信息来源">⚙</button></div><div id="catchips"></div><div id="topics"></div><div id="msg2"></div><div class="mut" id="srcerr" style="padding:2px 10px"></div>
+  <div id="settingswrap" hidden>
+    <div class="sec">配置</div>
+    <div id="cfgside">
+      <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
+      <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" />
+      <button class="btn primary" id="b-save">保存并测试</button>
+      <div class="mut">AI 模型（分类与总结用；与设置里的小模型是同一份配置，改完立即生效）</div>
+      <select id="cfg-model"><option value="__default">读取中…</option></select>
+      <div class="mut" id="model-out"></div>
+      <button class="btn" id="b-clearcache" title="删掉分类与总结缓存，用当前模型重算">清空 AI 缓存</button>
+      <div class="mut" id="cfg-out"></div>
+    </div>
+    <div class="sec">信息来源 <span id="srccount" class="mut"></span></div>
+    <div id="srclist" class="srclist"></div>
+    <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
   </div>
-  <div class="sec">信息来源 <span id="srccount" class="mut"></span></div>
-  <div id="srclist" class="srclist"></div>
-  <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
 </aside>
 </div>`;
 
@@ -101,7 +107,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.15.2-models';
+const BUILD = 'v0.16.0-settings';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -741,6 +747,14 @@ const onModelChange = async (): Promise<void> => {
 };
 
 $('cfg-model').onchange = () => void onModelChange();
+
+// 顶部 ⚙：展开/收起下方设置（配置 + 信息来源）；
+$('b-settings').onclick = (): void => {
+  const w = document.querySelector('#settingswrap') as HTMLElement | null;
+  if (!w) return;
+  w.hidden = !w.hidden;
+  if (!w.hidden) w.scrollIntoView({ block: 'end' });
+};
 
 $('b-save').onclick = async () => {
   const v = (document.querySelector('#cfg-proxy') as HTMLInputElement).value.trim();

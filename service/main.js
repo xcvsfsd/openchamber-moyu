@@ -481,9 +481,8 @@ var modelRefsOf = (value) => {
 };
 var modelCatalog = (s) => {
   const seen = new Map;
-  for (const list of [s.favoriteModels, s.recentModels]) {
-    for (const m of modelRefsOf(list))
-      seen.set(`${m.providerID}/${m.modelID}`, m);
+  for (const m of modelRefsOf(s.recentModels).slice(0, 2)) {
+    seen.set(`${m.providerID}/${m.modelID}`, m);
   }
   const ov = typeof s.smallModelOverride === "string" ? s.smallModelOverride.trim() : "";
   const slash = ov.indexOf("/");

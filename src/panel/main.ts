@@ -24,8 +24,9 @@ const TITLE_ONLY: readonly string[] = ['toutiao'];
 // AI 分类候选（固定集合，避免碎片化）
 const CATS = ['AI科技', '数码', '互联网', '财经', '时政', '社会', '娱乐', '体育', '汽车', '房产', '教育', '健康', '科学', '游戏', '其他'];
 const LIST_TTL = 3 * 60 * 1000;
-const PER_PAIR = 12; // 每个社区频道最多取几条（19 个榜单，控制总量）
-const CAT_BATCH = 25; // 一次分类几条标题
+const PER_PAIR = 12; // 每个社区频道最多取几条（20 个榜单，控制总量）
+const CAT_BATCH = 30; // 一次分类几条标题
+const CAT_WORKERS = 3; // 分类并发路数（串行太慢，并发跑小模型）
 
 const host = connectHost();
 const root = document.querySelector<HTMLElement>('#app');
@@ -65,7 +66,7 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
 </style>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
-  <div class="sec">话题 <span id="tcount" class="mut"></span> <button class="btn" id="b-refresh" title="手动刷新">↻</button></div><div id="msg2"></div><div id="catchips"></div><div id="topics"></div>
+  <div class="sec">话题 <span id="tcount" class="mut"></span> <button class="btn" id="b-refresh" title="手动刷新">↻</button></div><div id="catchips"></div><div id="topics"></div><div id="msg2"></div><div class="mut" id="srcerr" style="padding:2px 10px"></div>
   <div class="sec">配置</div>
   <div id="cfgside">
     <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
@@ -82,7 +83,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.10.1-catprog';
+const BUILD = 'v0.11.0-fast';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -143,9 +144,10 @@ const paintList = (): void => {
   const ordered = CATS.filter((c) => present.includes(c));
   paintChips(ordered);
   const tstr = listAt > 0 ? (() => { const d = new Date(listAt); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; })() : '';
-  const fail = failed.length > 0 ? ` · ${failed.join('、')}暂不可用` : '';
   const cprog = catRunning ? ` · 分类 ${catDone}/${catTotal}` : '';
-  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}${tstr ? ` · 更新 ${tstr}` : ''}${cprog}${fail}` : fail.replace(/^ · /, '');
+  ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}${tstr ? ` · 更新 ${tstr}` : ''}${cprog}` : (tstr ? `更新 ${tstr}` : '');
+  const se = document.querySelector('#srcerr');
+  if (se) se.textContent = failed.length > 0 ? `暂不可用：${failed.join('、')}（多为对侧限流，过一会儿点↻再试）` : '';
   topicsEl.innerHTML = '';
   const groups = selCat ? [selCat] : ordered.length > 0 ? ordered : [''];
   for (const g of groups) {
@@ -172,7 +174,13 @@ const paintList = (): void => {
   }
 };
 
-// AI 分类：25 条一批调小模型，按标题归类；结果按标题缓存，失败静默（保持无分组列表）
+// AI 分类：多路并发，25→30 条一批调小模型，按标题归类；结果进内存 map + 整表持久化
+const saveCats = (): void => {
+  let obj = Object.fromEntries(catMem);
+  const keys = Object.keys(obj);
+  if (keys.length > 1000) obj = Object.fromEntries(keys.slice(-1000).map((k) => [k, obj[k]]));
+  void storeSet('moyu:cats', obj);
+};
 const classifyAll = async (run: number): Promise<void> => {
   if (catsOff) return;
   const pending = topics.filter((t) => !catMem.has(ckey(t)));
@@ -181,34 +189,30 @@ const classifyAll = async (run: number): Promise<void> => {
   catRunning = pending.length > 0;
   paintList();
   if (pending.length === 0) return;
-  for (let i = 0; i < pending.length; i += CAT_BATCH) {
-    if (run !== feedRun) return;
-    const batch = pending.slice(i, i + CAT_BATCH);
-    const hits = await Promise.all(batch.map(async (t) => {
-      const h = await storeGet(ckey(t));
-      return typeof h === 'string' && h ? h : '';
-    }));
-    const uncached = batch.filter((_, j) => !hits[j]);
-    if (uncached.length > 0) {
+  let bi = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      if (run !== feedRun || catsOff) return;
+      const idx = bi;
+      bi += CAT_BATCH;
+      if (idx >= pending.length) return;
+      const batch = pending.slice(idx, idx + CAT_BATCH);
       try {
-        const lines = uncached.map((t, j) => `${j}. ${t.title}`).join('\n').slice(0, 3000);
+        const lines = batch.map((t, j) => `${j}. ${t.title}`).join('\n').slice(0, 3500);
         const g = await host.generate({
           system: `你是中文新闻分类器。把每条标题归入以下恰好一个分类：${CATS.join('、')}。只输出每行“序号:分类”，无多余文字。`,
           prompt: lines,
-          maxOutputTokens: 256,
+          maxOutputTokens: 320,
         });
+        if (run !== feedRun || catsOff) return;
         const got: string[] = [];
         for (const ln of g.text.split('\n')) {
           const m = /^\s*(\d+)\s*[:：]\s*(\S+)/.exec(ln);
           if (!m) continue;
-          const cat = CATS.includes(m[2]!) ? m[2]! : '其他';
-          got[Number(m[1])] = cat;
+          got[Number(m[1])] = CATS.includes(m[2]!) ? m[2]! : '其他';
         }
-        await Promise.all(uncached.map(async (t, j) => {
-          const cat = got[j] ?? '其他';
-          catMem.set(ckey(t), cat);
-          await storeSet(ckey(t), cat);
-        }));
+        batch.forEach((t, j) => catMem.set(ckey(t), got[j] ?? '其他'));
+        saveCats();
       } catch (e) {
         const code = (e as { code?: string })?.code;
         if (code === 'NO_MODEL' || code === 'MODEL_FAILED') {
@@ -219,16 +223,15 @@ const classifyAll = async (run: number): Promise<void> => {
           return;
         }
         // 单批失败：全标其他，不重试
-        for (const t of uncached) catMem.set(ckey(t), '其他');
+        for (const t of batch) catMem.set(ckey(t), '其他');
       }
-    } else {
-      batch.forEach((t, j) => catMem.set(ckey(t), hits[j]!));
+      catDone = Math.min(pending.length, catDone + batch.length);
+      if (run !== feedRun) return;
+      paintList();
     }
-    if (run !== feedRun) return;
-    catDone = Math.min(pending.length, i + CAT_BATCH);
-    paintList();
-  }
-  if (run === feedRun) { catRunning = false; paintList(); }
+  };
+  await Promise.all(Array.from({ length: Math.min(CAT_WORKERS, pending.length) }, () => worker()));
+  if (run === feedRun) { catRunning = false; saveCats(); paintList(); }
 };
 
 // 按需 AI 总结：点 ✦ 拉正文（走 service），用小模型总结后展开在行内；结果按话题缓存。
@@ -352,7 +355,8 @@ const pollAll = async (force = false): Promise<void> => {
       seen.add(k);
       return true;
     });
-    say(failed.length > 0 ? esc(`${failed.join('、')}暂不可用（多为对侧限流过一会儿点↻再试）`) : '');
+    void storeSet('moyu:feed', { at: listAt, topics, failed });
+    say('');
     paintList();
     void classifyAll(run);
   } finally { busy = false; }
@@ -389,4 +393,25 @@ const loadPrefs = async (): Promise<void> => {
 };
 
 host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
-void loadPrefs().then(() => void pollAll(true));
+// 进面板只读缓存不拉网（提速+省流）：刷新只能点 ↻
+void (async () => {
+  await loadPrefs();
+  try {
+    const cm = await storeGet('moyu:cats');
+    if (cm && typeof cm === 'object') {
+      for (const [k, v] of Object.entries(cm as Record<string, unknown>)) {
+        if (typeof v === 'string') catMem.set(k, v);
+      }
+    }
+    const fd = await storeGet('moyu:feed') as { at?: unknown; topics?: unknown; failed?: unknown } | undefined;
+    if (fd && typeof fd.at === 'number' && Array.isArray(fd.topics) && fd.topics.length > 0) {
+      listAt = fd.at;
+      topics = fd.topics as Topic[];
+      failed = Array.isArray(fd.failed) ? (fd.failed as string[]) : [];
+      paintList();
+      void classifyAll(++feedRun);
+      return;
+    }
+  } catch { /* 缓存坏了就走正常拉取 */ }
+  void pollAll(true);
+})();

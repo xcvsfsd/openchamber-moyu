@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
+
 // src/service/main.ts
 import http from "node:http";
 import { readFile, writeFile, rename } from "node:fs/promises";
@@ -465,6 +468,13 @@ var readHostSettings = async () => {
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
+  }
+};
+var mtimeOf = (p) => {
+  try {
+    return Math.round(__require("node:fs").statSync(p).mtimeMs);
+  } catch {
+    return 0;
   }
 };
 var modelRefsOf = (value) => {
@@ -1487,7 +1497,8 @@ var server = http.createServer((req, res) => {
       ok: true,
       useDefault: s.smallModelUseDefault !== false,
       override: typeof s.smallModelOverride === "string" ? s.smallModelOverride : "",
-      models: modelCatalog(s)
+      models: modelCatalog(s),
+      mtime: mtimeOf(SETTINGS_FILE)
     }));
     return;
   }
@@ -1508,7 +1519,13 @@ var server = http.createServer((req, res) => {
           s.smallModelOverride = `${providerID}/${modelID}`;
           delete s.smallModelVariant;
         });
-        return json(res, 200, { ok: true, useDefault, override: useDefault ? "" : `${providerID}/${modelID}` });
+        const check = await readHostSettings();
+        return json(res, 200, {
+          ok: true,
+          useDefault: check.smallModelUseDefault !== false,
+          override: typeof check.smallModelOverride === "string" ? check.smallModelOverride : "",
+          mtime: mtimeOf(SETTINGS_FILE)
+        });
       } catch (e) {
         return json(res, 200, { ok: false, error: e instanceof Error ? e.message : "写入宿主设置失败" });
       }

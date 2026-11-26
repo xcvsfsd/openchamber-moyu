@@ -3,7 +3,8 @@
 // 登录/回复/点赞/通知先按契约返回 need-login，UI 照 moyu 文案提示，不静默失败。
 // 代理：env 优先（HTTPS_PROXY/ALL_PROXY/HTTP_PROXY），直连为主；Cloudflare 场景 service 日志写 stderr。
 import http from 'node:http';
-import { readFile, writeFile, rename } from 'node:fs/promises';
+import { readFile, writeFile, rename, stat } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { COMMUNITIES, type CommunityId, type Post, type Thread, type Topic } from '../shared/types.js';
@@ -26,6 +27,9 @@ const readHostSettings = async (): Promise<Record<string, unknown>> => {
     const parsed: unknown = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
   } catch { return {}; }
+};
+const mtimeOf = (p: string): number => {
+  try { return Math.round(require('node:fs').statSync(p).mtimeMs); } catch { return 0; }
 };
 const modelRefsOf = (value: unknown): ModelRef[] => {
   if (!Array.isArray(value)) return [];
@@ -872,6 +876,7 @@ const server = http.createServer((req, res) => {
       useDefault: s.smallModelUseDefault !== false,
       override: typeof s.smallModelOverride === 'string' ? s.smallModelOverride : '',
       models: modelCatalog(s),
+      mtime: mtimeOf(SETTINGS_FILE),
     }));
     return;
   }
@@ -891,7 +896,14 @@ const server = http.createServer((req, res) => {
           s.smallModelOverride = `${providerID}/${modelID}`;
           delete s.smallModelVariant;
         });
-        return json(res, 200, { ok: true, useDefault, override: useDefault ? '' : `${providerID}/${modelID}` });
+        // 写完立刻回读确认：宿主设置界面可能随后用内存旧值覆盖，这里返回的是落盘实况
+        const check = await readHostSettings();
+        return json(res, 200, {
+          ok: true,
+          useDefault: check.smallModelUseDefault !== false,
+          override: typeof check.smallModelOverride === 'string' ? check.smallModelOverride : '',
+          mtime: mtimeOf(SETTINGS_FILE),
+        });
       } catch (e) {
         return json(res, 200, { ok: false, error: e instanceof Error ? e.message : '写入宿主设置失败' });
       }

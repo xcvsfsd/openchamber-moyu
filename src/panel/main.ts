@@ -746,13 +746,16 @@ $('b-clearcache').onclick = async (): Promise<void> => {
 };
 
 // AI 模型选择：直接改宿主 settings.json 里的小模型（宿主每次生成都重读，立即生效）
+// 本面板上次写入的意图：宿主设置界面用内存旧值覆盖时会漂移，加载时比对并提示
+type ModelIntent = { useDefault: boolean; override: string; at: number };
 const loadModelSel = async (): Promise<void> => {
   const sel = document.querySelector('#cfg-model') as HTMLSelectElement | null;
+  const out = document.querySelector('#model-out');
   if (!sel) return;
   try {
     const r = await svc('GET', '/settings/model');
     const j = JSON.parse(r.body) as {
-      ok: boolean; useDefault?: boolean; override?: string; error?: string;
+      ok: boolean; useDefault?: boolean; override?: string; error?: string; mtime?: number;
       models?: Array<{ providerID: string; modelID: string }>;
     };
     if (!j.ok) { sel.innerHTML = '<option value="__default">读取失败</option>'; return; }
@@ -777,6 +780,18 @@ const loadModelSel = async (): Promise<void> => {
       if (j.useDefault === false && o.value === j.override) o.selected = true;
       g.appendChild(o);
     }
+    // 漂移检测：文件里的值和本面板上次写入的不一致，说明被宿主设置界面覆盖了
+    const intent = await storeGet('moyu:model:intent') as ModelIntent | undefined;
+    const cur = j.useDefault !== false ? '__default' : (j.override ?? '');
+    const want = !intent ? '' : intent.useDefault ? '__default' : intent.override;
+    if (out && intent && cur !== want) {
+      const when = new Date(intent.at);
+      const hh = String(when.getHours()).padStart(2, '0');
+      const mm = String(when.getMinutes()).padStart(2, '0');
+      out.textContent = `注意：本面板在 ${hh}:${mm} 设为 ${want === '__default' ? '跟随默认模型' : want}，但宿主设置里现在是 ${cur === '__default' ? '跟随默认模型' : cur}（可能在设置界面动过模型）。要改回来，在上面重新选一次。`;
+    } else if (out && out.textContent.startsWith('注意：')) {
+      out.textContent = '';
+    }
   } catch {
     sel.innerHTML = '<option value="__default">service 未就绪</option>';
   }
@@ -794,8 +809,17 @@ const onModelChange = async (): Promise<void> => {
   out.textContent = '正在切换…';
   try {
     const r = await svc('POST', '/settings/model', JSON.stringify(body));
-    const j = JSON.parse(r.body) as { ok: boolean; error?: string };
-    out.textContent = j.ok ? '已切换，下次总结/分类就用它（想重算旧结果点「清空 AI 缓存」）' : `切换失败：${j.error ?? '未知错误'}`;
+    const j = JSON.parse(r.body) as { ok: boolean; error?: string; useDefault?: boolean; override?: string };
+    if (!j.ok) { out.textContent = `切换失败：${j.error ?? '未知错误'}`; return; }
+    // 落盘确认 + 记录意图：之后宿主设置界面覆盖了，这里能检测出来
+    const actual = j.useDefault !== false ? '__default' : (j.override ?? '');
+    await storeSet('moyu:model:intent', { useDefault: j.useDefault !== false, override: j.override ?? '', at: Date.now() });
+    const wrote = j.useDefault !== false ? '跟随默认模型' : (j.override ?? '');
+    out.textContent = `已写入宿主配置并确认：${wrote}。下次总结/分类就用它（想重算旧结果点「清空 AI 缓存」）。注意：在系统设置里再动模型会覆盖这里。`;
+    if (j.useDefault !== false && !body.useDefault) {
+      out.textContent += '（宿主拒绝了指定模型，回退到默认）';
+    }
+    void loadModelSel();
   } catch (e) {
     out.textContent = `切换失败：${e instanceof Error ? e.message : '未知错误'}`;
   }

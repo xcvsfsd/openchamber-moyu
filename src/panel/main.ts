@@ -46,6 +46,14 @@ aside{width:100%;display:flex;flex-direction:column;padding:10px 8px;gap:2px;ove
 #topicbar .spacer{flex:1}
 .btn.icon{padding:2px 7px;line-height:1.3}
 #settingswrap[hidden]{display:none}
+#title-settings{display:none}
+body[data-pane="settings"] #title-list,
+body[data-pane="settings"] #catchips,
+body[data-pane="settings"] #topics,
+body[data-pane="settings"] #msg2,
+body[data-pane="settings"] #srcerr{display:none}
+body[data-pane="settings"] #title-settings{display:inline}
+body[data-pane="settings"] #b-refresh{display:none}
 .nrow{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);font:inherit}
 .nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere;opacity:.8}
 .nrow .xp{display:block;font-size:12.5px;opacity:.6;margin-top:1px}
@@ -82,7 +90,7 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
 </style>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
-  <div class="sec" id="topicbar">话题 <span id="tcount" class="mut"></span><span class="spacer"></span><button class="btn icon" id="b-refresh" title="手动刷新">↻</button><button class="btn icon" id="b-settings" title="设置与信息来源">⚙</button></div><div id="catchips"></div><div id="topics"></div><div id="msg2"></div><div class="mut" id="srcerr" style="padding:2px 10px"></div>
+  <div class="sec" id="topicbar"><span id="title-list">话题 <span id="tcount" class="mut"></span></span><span id="title-settings">设置</span><span class="spacer"></span><button class="btn icon" id="b-refresh" title="手动刷新">↻</button><button class="btn icon" id="b-settings" title="设置与信息来源">⚙</button></div><div id="catchips"></div><div id="topics"></div><div id="msg2"></div><div class="mut" id="srcerr" style="padding:2px 10px"></div>
   <div id="settingswrap" hidden>
     <div class="sec">配置</div>
     <div id="cfgside">
@@ -107,7 +115,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.16.0-settings';
+const BUILD = 'v0.16.1-pane';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -748,12 +756,22 @@ const onModelChange = async (): Promise<void> => {
 
 $('cfg-model').onchange = () => void onModelChange();
 
-// 顶部 ⚙：展开/收起下方设置（配置 + 信息来源）；
-$('b-settings').onclick = (): void => {
+// 顶部 ⚙：列表与设置互斥，点进去只显示设置，再点返回列表
+const setPane = (pane: 'list' | 'settings'): void => {
+  document.body.dataset.pane = pane;
   const w = document.querySelector('#settingswrap') as HTMLElement | null;
-  if (!w) return;
-  w.hidden = !w.hidden;
-  if (!w.hidden) w.scrollIntoView({ block: 'end' });
+  if (w) w.hidden = pane !== 'settings';
+  const btn = document.querySelector('#b-settings') as HTMLButtonElement | null;
+  if (btn) {
+    btn.textContent = pane === 'settings' ? '‹' : '⚙';
+    btn.title = pane === 'settings' ? '返回列表' : '设置与信息来源';
+  }
+  const aside = document.querySelector('aside');
+  if (aside) aside.scrollTop = 0;
+};
+setPane('list');
+$('b-settings').onclick = (): void => {
+  setPane(document.body.dataset.pane === 'settings' ? 'list' : 'settings');
 };
 
 $('b-save').onclick = async () => {

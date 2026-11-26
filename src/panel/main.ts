@@ -84,7 +84,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.11.4-robust';
+const BUILD = 'v0.11.5-cache';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -179,9 +179,7 @@ const paintChips = (cats: string[]): void => {
   }
 };
 
-// AI 结果缓存版本：换模型后删旧 key（不区分模型的旧结果会挡住新模型效果）
-const AI_VER = 'm2';
-const ckey = (t: Topic): string => `moyu:cat:${AI_VER}:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
+const ckey = (t: Topic): string => `moyu:cat:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
 
 const paintList = (): void => {
   const present = [...new Set(topics.map((t) => catMem.get(ckey(t))).filter((c): c is string => !!c))];
@@ -223,7 +221,7 @@ const saveCats = (): void => {
   let obj = Object.fromEntries(catMem);
   const keys = Object.keys(obj);
   if (keys.length > 1000) obj = Object.fromEntries(keys.slice(-1000).map((k) => [k, obj[k]]));
-  void storeSet(`moyu:cats:${AI_VER}`, obj);
+  void storeSet('moyu:cats', obj);
 };
 const classifyAll = async (run: number): Promise<void> => {
   if (catsOff) return;
@@ -296,7 +294,7 @@ const htmlText = (html: string): string =>
 const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Promise<void> => {
   const old = row.querySelector('.aisum');
   if (old) { old.remove(); return; } // 再点收起
-  const key = `moyu:csum:${AI_VER}:${t.community}:${t.id}`;
+  const key = `moyu:csum:${t.community}:${t.id}`;
   btn.disabled = true;
   const label = btn.textContent;
   btn.textContent = '…';
@@ -384,7 +382,8 @@ const pollAll = async (force = false): Promise<void> => {
     chipsEl.innerHTML = '';
     await Promise.all(pairs.map(async ({ c, ch }) => {
       try {
-        const r = await svc('GET', `/list?community=${c.id}&channel=${encodeURIComponent(ch.id)}`);
+        const f = force ? '&force=1' : '';
+        const r = await svc('GET', `/list?community=${c.id}&channel=${encodeURIComponent(ch.id)}${f}`);
         const j = JSON.parse(r.body) as { ok: boolean; topics?: Topic[]; error?: string };
         if (!j.ok) throw new Error(j.error ?? '列表失败');
         if (run !== feedRun) return;
@@ -469,7 +468,7 @@ host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 void (async () => {
   await loadPrefs();
   try {
-    const cm = await storeGet(`moyu:cats:${AI_VER}`);
+    const cm = await storeGet('moyu:cats');
     if (cm && typeof cm === 'object') {
       for (const [k, v] of Object.entries(cm as Record<string, unknown>)) {
         if (typeof v === 'string') catMem.set(k, v);
@@ -482,5 +481,6 @@ void (async () => {
       return;
     }
   } catch { /* 缓存坏了就走正常拉取 */ }
-  void pollAll(true);
+  // 首次没有本地列表：用 service 侧缓存（可能刚有人刷过），不强制打网络
+  void pollAll(false);
 })();

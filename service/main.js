@@ -445,13 +445,13 @@ if (!port || !token) {
   process.exit(1);
 }
 var FETCH_TIMEOUT_MS = 15000;
-var LIST_CACHE_TTL_MS = 3 * 60 * 1000;
+var LIST_CACHE_TTL_MS = 30 * 60 * 1000;
 var BODY_MAX = 256 * 1024;
 var lastStartByHost = new Map;
 var gateByHost = new Map;
 var PACE_BY_HOST = {
   "linux.do": 1600,
-  "www.v2ex.com": 1200
+  "www.v2ex.com": 1000
 };
 var PACE_DEFAULT = 250;
 var pace = async (target) => {
@@ -1188,10 +1188,10 @@ var bingSearch = async (q, proxy) => {
   return out;
 };
 var listCache = new Map;
-var cachedList = async (community, channel, proxy) => {
+var cachedList = async (community, channel, proxy, force = false) => {
   const key = `${community}/${channel}/${proxy ?? ""}`;
   const hit = listCache.get(key);
-  if (hit && Date.now() - hit.at < LIST_CACHE_TTL_MS)
+  if (!force && hit && Date.now() - hit.at < LIST_CACHE_TTL_MS)
     return { topics: hit.topics, cached: true };
   try {
     const topics = await fetchList(community, channel, proxy);
@@ -1200,6 +1200,22 @@ var cachedList = async (community, channel, proxy) => {
   } catch (e) {
     if (hit && hit.topics.length > 0)
       return { topics: hit.topics, cached: true };
+    throw e;
+  }
+};
+var threadCache = new Map;
+var cachedThread = async (key, proxy, force, load) => {
+  const k = `${key}/${proxy ?? ""}`;
+  const hit = threadCache.get(k);
+  if (!force && hit && Date.now() - hit.at < LIST_CACHE_TTL_MS)
+    return { thread: hit.thread, cached: true };
+  try {
+    const thread = await load();
+    threadCache.set(k, { at: Date.now(), thread });
+    return { thread, cached: false };
+  } catch (e) {
+    if (hit)
+      return { thread: hit.thread, cached: true };
     throw e;
   }
 };
@@ -1265,7 +1281,8 @@ var server = http.createServer((req, res) => {
     if (!COMMUNITIES.some((c) => c.id === community))
       return json(res, 400, { ok: false, error: "bad-community" });
     const px = proxyOf(req, url) ?? undefined;
-    cachedList(community, channel, px).then(({ topics, cached }) => json(res, 200, { ok: true, topics, cached }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
+    const force = url.searchParams.get("force") === "1";
+    cachedList(community, channel, px, force).then(({ topics, cached }) => json(res, 200, { ok: true, topics, cached }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
     return;
   }
   if (req.method === "GET" && url.pathname === "/thread") {
@@ -1273,7 +1290,8 @@ var server = http.createServer((req, res) => {
     const id = url.searchParams.get("id") ?? "";
     const page = Math.max(1, Number(url.searchParams.get("page") ?? "1") || 1);
     const px = proxyOf(req, url) ?? undefined;
-    (async () => {
+    const force = url.searchParams.get("force") === "1";
+    cachedThread(`${community}:${id}:${page}`, px, force, async () => {
       if (community === "infoq")
         return infoqThread(id, px);
       if (community === "oschina")
@@ -1287,7 +1305,7 @@ var server = http.createServer((req, res) => {
       if (community === "toutiao")
         return hotThread(community, id, px);
       return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
-    })().then((thread) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
+    }).then(({ thread }) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
     return;
   }
   if (req.method === "GET" && url.pathname === "/search") {

@@ -11,7 +11,7 @@ const token = process.env.OPENCHAMBER_SERVICE_TOKEN ?? '';
 if (!port || !token) { console.error('OPENCHAMBER_SERVICE_PORT and OPENCHAMBER_SERVICE_TOKEN are required'); process.exit(1); }
 
 const FETCH_TIMEOUT_MS = 15_000;
-const LIST_CACHE_TTL_MS = 3 * 60 * 1000; // moyu：列表缓存 3 分钟
+const LIST_CACHE_TTL_MS = 30 * 60 * 1000; // 列表/正文缓存 30 分钟；面板点 ↻ 用 force=1 绕过
 const BODY_MAX = 256 * 1024;
 
 // 请求排队：按站点分队列，真正串行（原来的 1 秒间隔在并发下会同时穿过去，触发 429）
@@ -20,7 +20,7 @@ const lastStartByHost = new Map<string, number>();
 const gateByHost = new Map<string, Promise<void>>();
 const PACE_BY_HOST: Record<string, number> = {
   'linux.do': 1600,
-  'www.v2ex.com': 1200,
+  'www.v2ex.com': 1000,
 };
 const PACE_DEFAULT = 250;
 const pace = async (target?: string): Promise<void> => {
@@ -607,12 +607,13 @@ const bingSearch = async (q: string, proxy?: string | null): Promise<SearchHit[]
   searchCache.set(key, { at: Date.now(), results: out });
   return out;
 };
-// ---- 缓存（列表 3 分钟，到期页面可见时再刷） ----
+// ---- 缓存：列表 30 分钟；正文 30 分钟 ----
+// 面板进入只读自己的 feed 缓存，点 ↻ 时带 force=1 强制绕过这里，避免"点了刷新还是旧数据"。
 const listCache = new Map<string, { at: number; topics: Topic[] }>();
-const cachedList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<{ topics: Topic[]; cached: boolean }> => {
+const cachedList = async (community: CommunityId, channel: string, proxy?: string | null, force = false): Promise<{ topics: Topic[]; cached: boolean }> => {
   const key = `${community}/${channel}/${proxy ?? ''}`;
   const hit = listCache.get(key);
-  if (hit && Date.now() - hit.at < LIST_CACHE_TTL_MS) return { topics: hit.topics, cached: true };
+  if (!force && hit && Date.now() - hit.at < LIST_CACHE_TTL_MS) return { topics: hit.topics, cached: true };
   try {
     const topics = await fetchList(community, channel, proxy);
     listCache.set(key, { at: Date.now(), topics });
@@ -620,6 +621,25 @@ const cachedList = async (community: CommunityId, channel: string, proxy?: strin
   } catch (e) {
     // 失败不断档：有旧缓存就先顶着（标 cached），页面照样可读，报错由调用方展示
     if (hit && hit.topics.length > 0) return { topics: hit.topics, cached: true };
+    throw e;
+  }
+};
+
+// 正文缓存：✦ 总结要点开正文，同一篇反复点不该反复抓网
+const threadCache = new Map<string, { at: number; thread: Thread }>();
+const cachedThread = async (
+  key: string, proxy: string | undefined, force: boolean,
+  load: () => Promise<Thread>,
+): Promise<{ thread: Thread; cached: boolean }> => {
+  const k = `${key}/${proxy ?? ''}`;
+  const hit = threadCache.get(k);
+  if (!force && hit && Date.now() - hit.at < LIST_CACHE_TTL_MS) return { thread: hit.thread, cached: true };
+  try {
+    const thread = await load();
+    threadCache.set(k, { at: Date.now(), thread });
+    return { thread, cached: false };
+  } catch (e) {
+    if (hit) return { thread: hit.thread, cached: true };
     throw e;
   }
 };
@@ -670,7 +690,8 @@ const server = http.createServer((req, res) => {
     const channel = url.searchParams.get('channel') ?? '';
     if (!COMMUNITIES.some((c) => c.id === community)) return json(res, 400, { ok: false, error: 'bad-community' });
     const px = proxyOf(req, url) ?? undefined;
-    cachedList(community, channel, px).then(
+    const force = url.searchParams.get('force') === '1';
+    cachedList(community, channel, px, force).then(
       ({ topics, cached }) => json(res, 200, { ok: true, topics, cached }),
       (e) => json(res, 200, { ok: false, error: netError(e).message }),
     );
@@ -681,7 +702,8 @@ const server = http.createServer((req, res) => {
     const id = url.searchParams.get('id') ?? '';
     const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
     const px = proxyOf(req, url) ?? undefined;
-    (async () => {
+    const force = url.searchParams.get('force') === '1';
+    cachedThread(`${community}:${id}:${page}`, px, force, async () => {
       if (community === 'infoq') return infoqThread(id, px);
       if (community === 'oschina') return oschinaThread(id, px);
       if (community === 'solidot') return solidotThread(id, px);
@@ -689,8 +711,8 @@ const server = http.createServer((req, res) => {
       if (community === 'ithome') return ithomeThread(id, px);
       if (community === 'toutiao') return hotThread(community, id, px);
       return community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
-    })().then(
-      (thread) => json(res, 200, { ok: true, thread }),
+    }).then(
+      ({ thread }) => json(res, 200, { ok: true, thread }),
       (e) => json(res, 200, { ok: false, error: netError(e).message }),
     );
     return;

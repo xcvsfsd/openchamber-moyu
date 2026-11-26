@@ -48,7 +48,9 @@ aside{width:100%;display:flex;flex-direction:column;padding:10px 8px;gap:2px;ove
 .nrow .aibtn:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 .nrow .aisum{flex:1 1 100%;font-size:12.5px;line-height:1.7;opacity:.92;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
 .nrow .xp{display:block;font-size:12.5px;opacity:.8;margin-top:1px}
-.cathead{font-size:12px;color:var(--oc-muted,#999);padding:10px 10px 2px;font-weight:700}
+.cathead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:16px 10px 6px;font-weight:700;font-size:13px;color:var(--oc-fg,inherit);border-bottom:1px solid var(--oc-border,#8883);margin-bottom:2px}
+.cathead .cu{font-weight:400;font-size:11px;color:var(--oc-muted,#999)}
+.nrow .tag{font-size:11px;color:var(--oc-muted,#999);opacity:.75}
 #catchips{display:flex;gap:6px;flex-wrap:wrap;padding:2px 10px 4px}
 #catchips button{border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
 #catchips button.on{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
@@ -87,7 +89,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.13.3-ttl';
+const BUILD = 'v0.14.0-sort';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -186,13 +188,13 @@ const paintChips = (cats: string[]): void => {
   const all = document.createElement('button');
   all.dataset.cat = '__all';
   all.className = selCat === '' ? 'on' : '';
-  all.onclick = () => { selCat = ''; paintList(); };
+  all.onclick = () => { selCat = ''; takeReadSnap(); paintList(); };
   chipsEl.appendChild(all);
   for (const c of cats) {
     const b = document.createElement('button');
     b.dataset.cat = c;
     b.className = selCat === c ? 'on' : '';
-    b.onclick = () => { selCat = selCat === c ? '' : c; paintList(); };
+    b.onclick = () => { selCat = selCat === c ? '' : c; takeReadSnap(); paintList(); };
     chipsEl.appendChild(b);
   }
   updateChipCounts();
@@ -313,6 +315,29 @@ const dedupeTopics = (items: Topic[]): Topic[] => {
   return out;
 };
 
+// 已读排序快照：只在“重新进入列表”（打开面板/刷新/切分类）时取一次，hover 不重排
+let readSnap: Set<string> | null = null;
+const takeReadSnap = (): void => { readSnap = new Set(readSet); };
+
+// 消息标签：日期 + 来源（无则不显示）
+const COMM_NAME = new Map(COMMUNITIES.map((c) => [c.id as string, c.name]));
+const PLATFORM_SRC: readonly string[] = ['news', 'tech', 'fin', 'ent', 'community', 'dev', 'shopping', 'weibo', 'douyin'];
+const srcLabel = (t: Topic): string =>
+  (PLATFORM_SRC as readonly string[]).includes(t.community) && t.author ? t.author : (COMM_NAME.get(t.community) ?? '');
+const fmtDay = (ts: number | null): string => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const tagOf = (t: Topic): string => {
+  const out: string[] = [];
+  const day = fmtDay(t.time);
+  if (day) out.push(`【${day}】`);
+  const src = srcLabel(t);
+  if (src) out.push(`【${src}】`);
+  return out.join('');
+};
+
 const paintList = (): void => {
   const present = [...new Set(topics.map((t) => catMem.get(ckey(t))).filter((c): c is string => !!c))];
   const ordered = CATS.filter((c) => present.includes(c));
@@ -323,20 +348,27 @@ const paintList = (): void => {
   const se = document.querySelector('#srcerr');
   if (se) se.textContent = failed.length > 0 ? `暂不可用：${failed.join('、')}（多为对侧限流，过一会儿点↻再试）` : '';
   topicsEl.innerHTML = '';
+  // 未读在前、已读在后（按进入时的快照，hover 不重排）
+  const sorted = readSnap
+    ? [...topics].sort((a, b) => Number(readSnap!.has(rkey(a))) - Number(readSnap!.has(rkey(b))))
+    : topics;
   const groups = selCat ? [selCat] : ordered.length > 0 ? ordered : [''];
   for (const g of groups) {
+    const rows = sorted.filter((t) => !g || catMem.get(ckey(t)) === g);
     if (!selCat && g) {
+      const unread = rows.filter((t) => !readSet.has(rkey(t))).length;
       const h = document.createElement('div');
       h.className = 'cathead';
-      h.textContent = g;
+      h.innerHTML = `<span class="cn">${esc(g)}</span><span class="cu">${unread > 0 ? `未读 ${unread}` : '已读完'}</span>`;
       topicsEl.appendChild(h);
     }
-    for (const t of topics) {
-      if (g && catMem.get(ckey(t)) !== g) continue;
+    for (const t of rows) {
       const d = document.createElement('div');
       d.className = 'nrow' + (readSet.has(rkey(t)) ? ' read' : '');
+      const tag = tagOf(t);
+      const tagEl = tag ? `<br><span class="tag">${esc(tag)}</span>` : '';
       const xcp = t.excerpt ? `<br><span class="xp">${esc(t.excerpt)}</span>` : '';
-      d.innerHTML = `<span class="tt">${esc(t.title)}${xcp}</span>`;
+      d.innerHTML = `<span class="tt">${esc(t.title)}${tagEl}${xcp}</span>`;
       d.onmouseenter = (): void => { markRead(t); d.classList.add('read'); };
       const b = document.createElement('button');
       b.className = 'aibtn';
@@ -581,6 +613,7 @@ const pollAll = async (force = false): Promise<void> => {
     listAt = Date.now();
     // 跨源去重（完全同题 / 包含关系 / 高重叠都算同一事件）
     topics = dedupeTopics(topics);
+    takeReadSnap();
     void saveFeed();
     say('');
     paintList();
@@ -712,6 +745,7 @@ void (async () => {
     const fd = await loadFeed();
     if (fd) {
       pruneAiCache();
+      takeReadSnap();
       paintList();
       void classifyAll(++feedRun);
       return;

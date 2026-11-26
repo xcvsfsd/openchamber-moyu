@@ -1322,14 +1322,15 @@ var cachedList = async (community, channel, proxy, force = false) => {
   const key = `${community}/${channel}/${proxy ?? ""}`;
   const hit = listCache.get(key);
   if (!force && hit && Date.now() - hit.at < LIST_CACHE_TTL_MS)
-    return { topics: hit.topics, cached: true };
+    return { topics: hit.topics, cached: true, at: hit.at };
   try {
     const topics = await fetchList(community, channel, proxy);
-    listCache.set(key, { at: Date.now(), topics });
-    return { topics, cached: false };
+    const at = Date.now();
+    listCache.set(key, { at, topics });
+    return { topics, cached: false, at };
   } catch (e) {
     if (hit && hit.topics.length > 0)
-      return { topics: hit.topics, cached: true };
+      return { topics: hit.topics, cached: true, at: hit.at };
     throw e;
   }
 };
@@ -1414,7 +1415,7 @@ var server = http.createServer((req, res) => {
       return json(res, 400, { ok: false, error: "bad-community" });
     const px = proxyOf(req, url) ?? undefined;
     const force = url.searchParams.get("force") === "1";
-    cachedList(community, channel, px, force).then(({ topics, cached }) => json(res, 200, { ok: true, topics, cached }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
+    cachedList(community, channel, px, force).then(({ topics, cached, at }) => json(res, 200, { ok: true, topics, cached, cachedAt: at }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
     return;
   }
   if (req.method === "GET" && url.pathname === "/thread") {

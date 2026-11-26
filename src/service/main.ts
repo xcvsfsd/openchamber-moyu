@@ -708,17 +708,18 @@ const bingSearch = async (q: string, proxy?: string | null): Promise<SearchHit[]
 // ---- 缓存：列表 30 分钟；正文 30 分钟 ----
 // 面板进入只读自己的 feed 缓存，点 ↻ 时带 force=1 强制绕过这里，避免"点了刷新还是旧数据"。
 const listCache = new Map<string, { at: number; topics: Topic[] }>();
-const cachedList = async (community: CommunityId, channel: string, proxy?: string | null, force = false): Promise<{ topics: Topic[]; cached: boolean }> => {
+const cachedList = async (community: CommunityId, channel: string, proxy?: string | null, force = false): Promise<{ topics: Topic[]; cached: boolean; at: number }> => {
   const key = `${community}/${channel}/${proxy ?? ''}`;
   const hit = listCache.get(key);
-  if (!force && hit && Date.now() - hit.at < LIST_CACHE_TTL_MS) return { topics: hit.topics, cached: true };
+  if (!force && hit && Date.now() - hit.at < LIST_CACHE_TTL_MS) return { topics: hit.topics, cached: true, at: hit.at };
   try {
     const topics = await fetchList(community, channel, proxy);
-    listCache.set(key, { at: Date.now(), topics });
-    return { topics, cached: false };
+    const at = Date.now();
+    listCache.set(key, { at, topics });
+    return { topics, cached: false, at };
   } catch (e) {
     // 失败不断档：有旧缓存就先顶着（标 cached），页面照样可读，报错由调用方展示
-    if (hit && hit.topics.length > 0) return { topics: hit.topics, cached: true };
+    if (hit && hit.topics.length > 0) return { topics: hit.topics, cached: true, at: hit.at };
     throw e;
   }
 };
@@ -791,7 +792,7 @@ const server = http.createServer((req, res) => {
     const px = proxyOf(req, url) ?? undefined;
     const force = url.searchParams.get('force') === '1';
     cachedList(community, channel, px, force).then(
-      ({ topics, cached }) => json(res, 200, { ok: true, topics, cached }),
+      ({ topics, cached, at }) => json(res, 200, { ok: true, topics, cached, cachedAt: at }),
       (e) => json(res, 200, { ok: false, error: netError(e).message }),
     );
     return;

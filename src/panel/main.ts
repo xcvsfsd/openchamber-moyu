@@ -90,7 +90,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.14.3-dim';
+const BUILD = 'v0.14.4-feedfix';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -119,23 +119,29 @@ const storeSet = async (k: string, v: unknown): Promise<void> => { try { await h
 
 // 信息流缓存：单条 value 上限 64KB，话题多时必须分片（meta 记分片数）
 const FEED_META = 'moyu:feed';
-const FEED_CHUNK = 48000;
-const saveFeed = async (): Promise<void> => {
+const FEED_VER = 2;
+// 12000 字符：中文按 3 字节/字约 36KB，稳在宿主单条 64KB 以下
+const FEED_CHUNK = 12000;
+// 写入串行 + 先分片后 meta（meta 是提交点）：避免两次刷新交错，读出一半新一半旧
+let feedChain: Promise<void> = Promise.resolve();
+const writeFeed = async (): Promise<void> => {
+  const snap = { at: listAt, failed: [...failed], topics: [...topics] };
   try {
-    const rows = topics.map((t) => [t.community, t.id, t.title, t.author, t.channel, t.replies, t.time, t.url, t.excerpt ?? '']);
-    const s = JSON.stringify({ at: listAt, failed, rows });
+    const rows = snap.topics.map((t) => [t.community, t.id, t.title, t.author, t.channel, t.replies, t.time, t.url, t.excerpt ?? '']);
+    const s = JSON.stringify({ at: snap.at, failed: snap.failed, rows });
     const n = Math.max(1, Math.ceil(s.length / FEED_CHUNK));
-    await host.storage.set(FEED_META, { at: listAt, failed, parts: n } as never);
     const parts: string[] = [];
     for (let i = 0; i < n; i++) parts.push(s.slice(i * FEED_CHUNK, (i + 1) * FEED_CHUNK));
-    await Promise.all(parts.map((p, i) => host.storage.set(`moyu:feed:p${i}`, p as never)));
-    for (let i = n; i < n + 4; i++) { try { await host.storage.delete(`moyu:feed:p${i}`); } catch { /* 无旧分片 */ } }
+    for (let i = 0; i < n; i++) await host.storage.set(`moyu:feed:p${i}`, parts[i] as never);
+    await host.storage.set(FEED_META, { v: FEED_VER, at: snap.at, failed: snap.failed, parts: n } as never);
+    for (let i = n; i < n + 6; i++) { try { await host.storage.delete(`moyu:feed:p${i}`); } catch { /* 无旧分片 */ } }
   } catch { /* 缓存失败不影响列表 */ }
 };
+const saveFeed = (): void => { feedChain = feedChain.then(writeFeed, writeFeed); };
 const loadFeed = async (): Promise<boolean> => {
   try {
-    const meta = await storeGet(FEED_META) as { at?: unknown; failed?: unknown; parts?: unknown } | undefined;
-    if (!meta || typeof meta.at !== 'number' || typeof meta.parts !== 'number') return false;
+    const meta = await storeGet(FEED_META) as { v?: unknown; at?: unknown; failed?: unknown; parts?: unknown } | undefined;
+    if (!meta || meta.v !== FEED_VER || typeof meta.at !== 'number' || typeof meta.parts !== 'number') return false;
     const n = meta.parts as number;
     if (n < 1 || n > 40) return false;
     const bufs: string[] = [];

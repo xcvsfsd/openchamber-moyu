@@ -25,8 +25,12 @@
 | 开源中国 | 官方新闻 RSS | RSS 摘要即正文 |
 | Solidot | 官方 RSS | RSS 摘要即正文 |
 | InfoQ 中国 | 官网首页 | 正文 SSR，`ProseMirror` 直抽 |
+| 国内新闻 | rebang.today `/news` | 澎湃 / 凤凰 / 观察者 / 联合早报 / 腾讯混排，带摘要 |
+| 微博 | rebang.today `?tab=weibo` | 热搜词条，✦ 走联网搜索 |
+| 抖音 | rebang.today `?tab=douyin` | 热点，带描述，✦ 走联网搜索 |
 
 > 知乎、CSDN 已移除：前者要登录、后者全站 JS 安全验证，直连与 tophub 都被挡，留着只会长期报错。
+> 百度热搜在 rebang 上已下线（`?tab=baidu` 会退回全站混排），换成抖音。
 
 ## 缓存
 

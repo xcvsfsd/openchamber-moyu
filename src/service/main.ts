@@ -398,6 +398,82 @@ const solidotList = async (proxy?: string | null): Promise<Topic[]> => {
   }).filter((t) => t.title);
 };
 
+// ---- 热榜聚合站 rebang.today（Next.js RSC 直出，一块数据带多个平台） ----
+// 首页/分类页/`?tab=` 都能取到 items[]：标题、直链、摘要、热度、平台名。
+const REBANG: Record<string, { url: string; name: string }> = {
+  news: { url: 'https://rebang.today/news', name: '国内新闻' },
+  weibo: { url: 'https://rebang.today/?tab=weibo', name: '微博' },
+  douyin: { url: 'https://rebang.today/?tab=douyin', name: '抖音' },
+};
+// Next.js Flight：数据在 self.__next_f.push([1,"..."]) 的 JSON 字符串里
+const decodeFlight = (body: string): string => {
+  const re = /self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)/g;
+  let out = '';
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) {
+    try { out += JSON.parse(`"${m[1]}"`) as string; } catch { /* 跳过坏分片 */ }
+  }
+  return out;
+};
+// 从 needle 后第一个 [ 起做括号匹配，取出完整 JSON 数组（避开字符串里的括号）
+const grabArray = (s: string, needle: string): string | null => {
+  const at = s.indexOf(needle);
+  if (at < 0) return null;
+  const start = s.indexOf('[', at);
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let k = start; k < s.length; k++) {
+    const c = s[k]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '[') depth++;
+    else if (c === ']') { depth--; if (depth === 0) return s.slice(start, k + 1); }
+  }
+  return null;
+};
+const rebangList = async (community: CommunityId, proxy?: string | null): Promise<Topic[]> => {
+  const cfg = REBANG[community];
+  if (!cfg) throw new Error('没有这个信息源');
+  let r;
+  try {
+    r = await timedFetch(cfg.url, proxy);
+  } catch {
+    throw new Error('热榜聚合站暂时连不上，过一会儿点 ↻ 再试');
+  }
+  if (r.status !== 200) throw new Error(`热榜聚合站返回了 ${r.status}`);
+  const raw = decodeFlight(await r.text());
+  const seg = grabArray(raw, '"items"');
+  if (!seg) throw new Error('热榜聚合站返回的内容读不懂');
+  let items: unknown;
+  try { items = JSON.parse(seg); } catch { throw new Error('热榜聚合站返回的内容读不懂'); }
+  if (!Array.isArray(items) || items.length === 0) throw new Error('热榜聚合站返回的内容读不懂');
+  const tabs = new Map<string, string>();
+  for (const m of raw.matchAll(/"tabKey":"([^"]+)","name":"([^"]+)"/g)) tabs.set(m[1]!, m[2]!);
+  return items.slice(0, 30).map((it, i): Topic | null => {
+    const o = it as {
+      itemKey?: unknown; title?: unknown; href?: unknown; mobileHref?: unknown; desc?: unknown;
+      extraInfo?: { tab_key?: unknown; display_text_items?: Array<{ text?: unknown }> };
+    };
+    const title = typeof o.title === 'string' ? o.title.trim() : '';
+    const url = typeof o.href === 'string' && /^https?:/i.test(o.href) ? o.href
+      : typeof o.mobileHref === 'string' && /^https?:/i.test(o.mobileHref) ? o.mobileHref : '';
+    if (!title || !url) return null;
+    const tk = o.extraInfo?.tab_key;
+    const platform = (typeof tk === 'string' && tabs.get(tk)) || cfg.name;
+    return {
+      community, id: typeof o.itemKey === 'string' && o.itemKey ? o.itemKey : `${cfg.url}#${i}`,
+      title: title.slice(0, 200), author: platform, avatar: null, channel: cfg.name,
+      replies: null, time: null, url,
+      excerpt: typeof o.desc === 'string' && o.desc.trim() ? o.desc.replace(/\s+/g, ' ').trim().slice(0, 300) : null,
+    };
+  }).filter((t): t is Topic => !!t && !!t.title && !!t.url);
+};
+
 // 热榜正文=原文链接卡（无评论）：从 3 分钟列表缓存里按序号取，缓存未命中就现拉
 // 头条原文页是纯 JS 壳，只给转跳卡。
 const hotThread = async (community: CommunityId, id: string, proxy?: string | null): Promise<Thread> => {
@@ -491,6 +567,22 @@ const oschinaThread = async (id: string, proxy?: string | null): Promise<Thread>
   const body = t.excerpt
     ? `<p>${escHtml(t.excerpt)}</p><p><a href="${safeUrl}">在浏览器中查看原文</a></p>`
     : `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  const opening: Post = {
+    floor: 0, author: t.author, avatar: null, html: body,
+    time: t.time, replyTo: null, likes: null, byAuthor: true,
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+
+// rebang 源：只有摘要 + 原文链接（原文多为各站详情页，反爬不一，不抓正文）
+const rebangThread = async (community: CommunityId, id: string, proxy?: string | null): Promise<Thread> => {
+  const topics = (await cachedList(community, 'hot', proxy)).topics;
+  const t = topics.find((x) => x.id === id);
+  if (!t) throw new Error('帖子不存在');
+  const safeUrl = t.url.replace(/&/g, '&amp;');
+  const body = t.excerpt
+    ? `<p>${escHtml(t.excerpt)}</p><p><a href="${safeUrl}">在浏览器中查看原文</a></p>`
+    : `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
   const opening: Post = {
     floor: 0, author: t.author, avatar: null, html: body,
     time: t.time, replyTo: null, likes: null, byAuthor: true,
@@ -646,6 +738,7 @@ const cachedThread = async (
 
 const fetchList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<Topic[]> => {
   if (community === 'toutiao') return toutiaoList(proxy);
+  if (community === 'news' || community === 'weibo' || community === 'douyin') return rebangList(community, proxy);
   if (community === 'juejin') return juejinList(proxy);
   if (community === 'ithome') return ithomeList(proxy);
   if (community === 'oschina') return oschinaList(proxy);
@@ -710,6 +803,7 @@ const server = http.createServer((req, res) => {
       if (community === 'juejin') return juejinThread(id, px);
       if (community === 'ithome') return ithomeThread(id, px);
       if (community === 'toutiao') return hotThread(community, id, px);
+      if (community === 'news' || community === 'weibo' || community === 'douyin') return rebangThread(community, id, px);
       return community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     }).then(
       ({ thread }) => json(res, 200, { ok: true, thread }),

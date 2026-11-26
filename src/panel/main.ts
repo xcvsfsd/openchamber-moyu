@@ -19,8 +19,9 @@ window.addEventListener('unhandledrejection', (e) => {
   showBootErrors();
 });
 
-// 无可抓正文的源：✦ 先联网搜索再总结（标题版兜底）
-const TITLE_ONLY: readonly string[] = ['toutiao'];
+// 无可抓正文的源：头条 ✦ 先联网搜索再总结；rebang 源自带摘要，直接用摘要总结
+const TITLE_ONLY: readonly string[] = ['toutiao', 'weibo', 'douyin'];
+const EXCERPT_ONLY: readonly string[] = ['news'];
 // AI 分类候选（固定集合，避免碎片化）
 const CATS = ['AI科技', '数码', '互联网', '财经', '时政', '社会', '娱乐', '体育', '汽车', '房产', '教育', '健康', '科学', '游戏', '其他'];
 const LIST_TTL = 3 * 60 * 1000;
@@ -86,7 +87,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.11.6-read';
+const BUILD = 'v0.12.0-rebang';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -319,6 +320,7 @@ const classifyAll = async (run: number): Promise<void> => {
 const htmlText = (html: string): string =>
   html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n').replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"')
+    .replace(/在浏览器中查看原文/g, '')
     .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
 const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Promise<void> => {
   const old = row.querySelector('.aisum');
@@ -331,12 +333,18 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
     const hit = await storeGet(key);
     let s = typeof hit === 'string' && hit ? hit : '';
     if (!s) {
-      const r = await svc('GET', `/thread?community=${t.community}&id=${encodeURIComponent(t.id)}&page=1`);
-      const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
-      if (!j.ok || !j.thread) throw new Error(j.error ?? '正文失败');
-      const th = j.thread;
-      const text = [th.opening ? htmlText(th.opening.html) : '', ...th.posts.map((p) => htmlText(p.html))]
-        .filter(Boolean).join('\n').slice(0, 3500);
+      // rebang 源自带摘要：直接用摘要总结，不额外请求正文
+      let text = '';
+      if ((EXCERPT_ONLY as readonly string[]).includes(t.community) && t.excerpt && t.excerpt.length >= 30) {
+        text = t.excerpt.slice(0, 2500);
+      } else {
+        const r = await svc('GET', `/thread?community=${t.community}&id=${encodeURIComponent(t.id)}&page=1`);
+        const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };
+        if (!j.ok || !j.thread) throw new Error(j.error ?? '正文失败');
+        const th = j.thread;
+        text = [th.opening ? htmlText(th.opening.html) : '', ...th.posts.map((p) => htmlText(p.html))]
+          .filter(Boolean).join('\n').slice(0, 3500);
+      }
       if (!text) {
         // 无可抓正文：先联网搜这条标题，用搜索摘要总结；搜不到才退化为标题版
         if (!(TITLE_ONLY as readonly string[]).includes(t.community)) throw new Error('这篇没有可总结的正文');

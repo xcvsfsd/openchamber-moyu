@@ -24,7 +24,10 @@ var COMMUNITIES = [
   { id: "ithome", name: "IT之家", channels: [{ id: "hot", name: "资讯" }] },
   { id: "oschina", name: "开源中国", channels: [{ id: "hot", name: "资讯" }] },
   { id: "solidot", name: "Solidot", channels: [{ id: "hot", name: "资讯" }] },
-  { id: "infoq", name: "InfoQ", channels: [{ id: "hot", name: "推荐" }] }
+  { id: "infoq", name: "InfoQ", channels: [{ id: "hot", name: "推荐" }] },
+  { id: "news", name: "国内新闻", channels: [{ id: "hot", name: "要闻" }] },
+  { id: "weibo", name: "微博", channels: [{ id: "hot", name: "热搜" }] },
+  { id: "douyin", name: "抖音", channels: [{ id: "hot", name: "热点" }] }
 ];
 
 // src/shared/rss.ts
@@ -913,6 +916,102 @@ var solidotList = async (proxy) => {
     };
   }).filter((t) => t.title);
 };
+var REBANG = {
+  news: { url: "https://rebang.today/news", name: "国内新闻" },
+  weibo: { url: "https://rebang.today/?tab=weibo", name: "微博" },
+  douyin: { url: "https://rebang.today/?tab=douyin", name: "抖音" }
+};
+var decodeFlight = (body) => {
+  const re = /self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)/g;
+  let out = "";
+  let m;
+  while (m = re.exec(body)) {
+    try {
+      out += JSON.parse(`"${m[1]}"`);
+    } catch {}
+  }
+  return out;
+};
+var grabArray = (s, needle) => {
+  const at = s.indexOf(needle);
+  if (at < 0)
+    return null;
+  const start = s.indexOf("[", at);
+  if (start < 0)
+    return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let k = start;k < s.length; k++) {
+    const c = s[k];
+    if (inStr) {
+      if (esc)
+        esc = false;
+      else if (c === "\\")
+        esc = true;
+      else if (c === '"')
+        inStr = false;
+      continue;
+    }
+    if (c === '"')
+      inStr = true;
+    else if (c === "[")
+      depth++;
+    else if (c === "]") {
+      depth--;
+      if (depth === 0)
+        return s.slice(start, k + 1);
+    }
+  }
+  return null;
+};
+var rebangList = async (community, proxy) => {
+  const cfg = REBANG[community];
+  if (!cfg)
+    throw new Error("没有这个信息源");
+  let r;
+  try {
+    r = await timedFetch(cfg.url, proxy);
+  } catch {
+    throw new Error("热榜聚合站暂时连不上，过一会儿点 ↻ 再试");
+  }
+  if (r.status !== 200)
+    throw new Error(`热榜聚合站返回了 ${r.status}`);
+  const raw = decodeFlight(await r.text());
+  const seg = grabArray(raw, '"items"');
+  if (!seg)
+    throw new Error("热榜聚合站返回的内容读不懂");
+  let items;
+  try {
+    items = JSON.parse(seg);
+  } catch {
+    throw new Error("热榜聚合站返回的内容读不懂");
+  }
+  if (!Array.isArray(items) || items.length === 0)
+    throw new Error("热榜聚合站返回的内容读不懂");
+  const tabs = new Map;
+  for (const m of raw.matchAll(/"tabKey":"([^"]+)","name":"([^"]+)"/g))
+    tabs.set(m[1], m[2]);
+  return items.slice(0, 30).map((it, i) => {
+    const o = it;
+    const title = typeof o.title === "string" ? o.title.trim() : "";
+    const url = typeof o.href === "string" && /^https?:/i.test(o.href) ? o.href : typeof o.mobileHref === "string" && /^https?:/i.test(o.mobileHref) ? o.mobileHref : "";
+    if (!title || !url)
+      return null;
+    const tk = o.extraInfo?.tab_key;
+    const platform = typeof tk === "string" && tabs.get(tk) || cfg.name;
+    return {
+      community,
+      id: typeof o.itemKey === "string" && o.itemKey ? o.itemKey : `${cfg.url}#${i}`,
+      title: title.slice(0, 200),
+      author: platform,
+      avatar: null,
+      channel: cfg.name,
+      replies: null,
+      time: null,
+      url,
+      excerpt: typeof o.desc === "string" && o.desc.trim() ? o.desc.replace(/\s+/g, " ").trim().slice(0, 300) : null
+    };
+  }).filter((t) => !!t && !!t.title && !!t.url);
+};
 var hotThread = async (community, id, proxy) => {
   if (!/^\d{1,12}$/.test(id))
     throw new Error("请求的参数不对（id）");
@@ -1033,6 +1132,25 @@ var oschinaThread = async (id, proxy) => {
     throw new Error("帖子不存在");
   const safeUrl = t.url.replace(/&/g, "&amp;");
   const body = t.excerpt ? `<p>${escHtml(t.excerpt)}</p><p><a href="${safeUrl}">在浏览器中查看原文</a></p>` : `<p>榜单只收录标题，<a href="${safeUrl}">在浏览器中查看原文</a></p>`;
+  const opening = {
+    floor: 0,
+    author: t.author,
+    avatar: null,
+    html: body,
+    time: t.time,
+    replyTo: null,
+    likes: null,
+    byAuthor: true
+  };
+  return { topic: t, opening, posts: [], page: 1, more: false };
+};
+var rebangThread = async (community, id, proxy) => {
+  const topics = (await cachedList(community, "hot", proxy)).topics;
+  const t = topics.find((x) => x.id === id);
+  if (!t)
+    throw new Error("帖子不存在");
+  const safeUrl = t.url.replace(/&/g, "&amp;");
+  const body = t.excerpt ? `<p>${escHtml(t.excerpt)}</p><p><a href="${safeUrl}">在浏览器中查看原文</a></p>` : `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
   const opening = {
     floor: 0,
     author: t.author,
@@ -1222,6 +1340,8 @@ var cachedThread = async (key, proxy, force, load) => {
 var fetchList = async (community, channel, proxy) => {
   if (community === "toutiao")
     return toutiaoList(proxy);
+  if (community === "news" || community === "weibo" || community === "douyin")
+    return rebangList(community, proxy);
   if (community === "juejin")
     return juejinList(proxy);
   if (community === "ithome")
@@ -1304,6 +1424,8 @@ var server = http.createServer((req, res) => {
         return ithomeThread(id, px);
       if (community === "toutiao")
         return hotThread(community, id, px);
+      if (community === "news" || community === "weibo" || community === "douyin")
+        return rebangThread(community, id, px);
       return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     }).then(({ thread }) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
     return;

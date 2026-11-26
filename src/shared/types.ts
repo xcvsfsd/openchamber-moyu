@@ -1,7 +1,8 @@
 // moyu 原生契约的 OpenChamber 移植：一个形状走论坛 + 热榜聚合。
 // 热榜只有列表：Topic.author 借放热度文案，channel 放子榜名，excerpt 放摘要；
 // 有正文的源（InfoQ/IT之家/掘金全文，oschina/Solidot 摘要）正文=原文内容卡。
-export type CommunityId = 'linuxdo' | 'v2ex' | 'toutiao' | 'juejin' | 'ithome' | 'oschina' | 'solidot' | 'infoq';
+export type CommunityId = 'linuxdo' | 'v2ex' | 'toutiao' | 'juejin' | 'ithome' | 'oschina' | 'solidot' | 'infoq'
+  | 'news' | 'weibo' | 'douyin';
 export type Channel = { id: string; name: string };
 export type CommunityInfo = { id: CommunityId; name: string; channels: Channel[] };
 export type Topic = {
@@ -51,4 +52,7 @@ export const COMMUNITIES: CommunityInfo[] = [
   { id: 'oschina', name: '开源中国', channels: [{ id: 'hot', name: '资讯' }] },
   { id: 'solidot', name: 'Solidot', channels: [{ id: 'hot', name: '资讯' }] },
   { id: 'infoq', name: 'InfoQ', channels: [{ id: 'hot', name: '推荐' }] },
+  { id: 'news', name: '国内新闻', channels: [{ id: 'hot', name: '要闻' }] },
+  { id: 'weibo', name: '微博', channels: [{ id: 'hot', name: '热搜' }] },
+  { id: 'douyin', name: '抖音', channels: [{ id: 'hot', name: '热点' }] },
 ];

@@ -402,6 +402,12 @@ const solidotList = async (proxy?: string | null): Promise<Topic[]> => {
 // 首页/分类页/`?tab=` 都能取到 items[]：标题、直链、摘要、热度、平台名。
 const REBANG: Record<string, { url: string; name: string }> = {
   news: { url: 'https://rebang.today/news', name: '国内新闻' },
+  tech: { url: 'https://rebang.today/tech', name: '科技' },
+  fin: { url: 'https://rebang.today/fin', name: '财经' },
+  ent: { url: 'https://rebang.today/ent', name: '娱乐' },
+  community: { url: 'https://rebang.today/community', name: '社区' },
+  dev: { url: 'https://rebang.today/dev', name: '开发' },
+  shopping: { url: 'https://rebang.today/shopping', name: '购物' },
   weibo: { url: 'https://rebang.today/?tab=weibo', name: '微博' },
   douyin: { url: 'https://rebang.today/?tab=douyin', name: '抖音' },
 };
@@ -454,7 +460,7 @@ const rebangList = async (community: CommunityId, proxy?: string | null): Promis
   if (!Array.isArray(items) || items.length === 0) throw new Error('热榜聚合站返回的内容读不懂');
   const tabs = new Map<string, string>();
   for (const m of raw.matchAll(/"tabKey":"([^"]+)","name":"([^"]+)"/g)) tabs.set(m[1]!, m[2]!);
-  return items.slice(0, 30).map((it, i): Topic | null => {
+  return items.slice(0, 15).map((it, i): Topic | null => {
     const o = it as {
       itemKey?: unknown; title?: unknown; href?: unknown; mobileHref?: unknown; desc?: unknown;
       extraInfo?: { tab_key?: unknown; display_text_items?: Array<{ text?: unknown }> };
@@ -738,7 +744,7 @@ const cachedThread = async (
 
 const fetchList = async (community: CommunityId, channel: string, proxy?: string | null): Promise<Topic[]> => {
   if (community === 'toutiao') return toutiaoList(proxy);
-  if (community === 'news' || community === 'weibo' || community === 'douyin') return rebangList(community, proxy);
+  if (REBANG[community]) return rebangList(community, proxy);
   if (community === 'juejin') return juejinList(proxy);
   if (community === 'ithome') return ithomeList(proxy);
   if (community === 'oschina') return oschinaList(proxy);
@@ -803,7 +809,7 @@ const server = http.createServer((req, res) => {
       if (community === 'juejin') return juejinThread(id, px);
       if (community === 'ithome') return ithomeThread(id, px);
       if (community === 'toutiao') return hotThread(community, id, px);
-      if (community === 'news' || community === 'weibo' || community === 'douyin') return rebangThread(community, id, px);
+      if (REBANG[community]) return rebangThread(community, id, px);
       return community === 'linuxdo' ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     }).then(
       ({ thread }) => json(res, 200, { ok: true, thread }),

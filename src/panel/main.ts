@@ -87,7 +87,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.12.0-rebang';
+const BUILD = 'v0.12.1-allboards';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -208,6 +208,53 @@ const markRead = (t: Topic): void => {
   if (!readTimer) {
     readTimer = setTimeout(() => { readTimer = null; void storeSet(READ_KEY, readList); }, 1000);
   }
+};
+
+// 跨源去重：同一事件在不同站标题措辞不同，只靠完全相等不够
+const normTitle = (s: string): string =>
+  s.toLowerCase()
+    .replace(/^[\s\d]+[.、)）]/, '')
+    .replace(/[#【】\[\]()（）《》「」…·。，,!！?？:：;；'"“”‘’\-—_/\\|~`\s]+/g, '');
+const bigrams = (s: string): Set<string> => {
+  const out = new Set<string>();
+  for (let i = 0; i + 1 < s.length; i++) out.add(s.slice(i, i + 2));
+  return out;
+};
+const jaccard = (a: Set<string>, b: Set<string>): number => {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter++;
+  return inter / (a.size + b.size - inter);
+};
+const feedScore = (t: Topic): number =>
+  (t.excerpt?.length ?? 0) + (t.replies ?? 0) * 2 + (t.time ? 1 : 0);
+const dedupeTopics = (items: Topic[]): Topic[] => {
+  const nrm = items.map((t) => normTitle(t.title));
+  const gs = nrm.map((n) => bigrams(n));
+  const out: Topic[] = [];
+  const idx: number[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < items.length; i++) {
+    const n = nrm[i]!;
+    if (n.length < 4 || seen.has(n)) continue;
+    const cur = items[i]!;
+    let dup = -1;
+    for (let j = 0; j < out.length; j++) {
+      const k = out[j]!;
+      if (cur.url && k.url === cur.url) { dup = j; break; }
+      const kn = nrm[idx[j]!]!;
+      // 包含关系：短标题够长、长度接近
+      if (n.length >= 8 && Math.abs(kn.length - n.length) <= 12 && (kn.includes(n) || n.includes(kn))) { dup = j; break; }
+      // 高重叠：同一事件换了说法
+      if (jaccard(gs[i]!, gs[idx[j]!]!) >= 0.78) { dup = j; break; }
+    }
+    if (dup >= 0) {
+      if (feedScore(cur) > feedScore(out[dup]!)) { out[dup] = cur; idx[dup] = i; }
+      continue;
+    }
+    seen.add(n); out.push(cur); idx.push(i);
+  }
+  return out;
 };
 
 const paintList = (): void => {
@@ -436,14 +483,8 @@ const pollAll = async (force = false): Promise<void> => {
     }));
     if (run !== feedRun) return;
     listAt = Date.now();
-    // 按标题去重（跨源同一事件只留一条）
-    const seen = new Set<string>();
-    topics = topics.filter((t) => {
-      const k = t.title.replace(/[\s\p{P}]+/gu, '').toLowerCase();
-      if (!k || seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
+    // 跨源去重（完全同题 / 包含关系 / 高重叠都算同一事件）
+    topics = dedupeTopics(topics);
     void saveFeed();
     say('');
     paintList();

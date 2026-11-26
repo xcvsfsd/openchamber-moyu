@@ -26,6 +26,12 @@ var COMMUNITIES = [
   { id: "solidot", name: "Solidot", channels: [{ id: "hot", name: "资讯" }] },
   { id: "infoq", name: "InfoQ", channels: [{ id: "hot", name: "推荐" }] },
   { id: "news", name: "国内新闻", channels: [{ id: "hot", name: "要闻" }] },
+  { id: "tech", name: "科技", channels: [{ id: "hot", name: "热榜" }] },
+  { id: "fin", name: "财经", channels: [{ id: "hot", name: "热榜" }] },
+  { id: "ent", name: "娱乐", channels: [{ id: "hot", name: "热榜" }] },
+  { id: "community", name: "社区", channels: [{ id: "hot", name: "热帖" }] },
+  { id: "dev", name: "开发", channels: [{ id: "hot", name: "热榜" }] },
+  { id: "shopping", name: "购物", channels: [{ id: "hot", name: "热榜" }] },
   { id: "weibo", name: "微博", channels: [{ id: "hot", name: "热搜" }] },
   { id: "douyin", name: "抖音", channels: [{ id: "hot", name: "热点" }] }
 ];
@@ -918,6 +924,12 @@ var solidotList = async (proxy) => {
 };
 var REBANG = {
   news: { url: "https://rebang.today/news", name: "国内新闻" },
+  tech: { url: "https://rebang.today/tech", name: "科技" },
+  fin: { url: "https://rebang.today/fin", name: "财经" },
+  ent: { url: "https://rebang.today/ent", name: "娱乐" },
+  community: { url: "https://rebang.today/community", name: "社区" },
+  dev: { url: "https://rebang.today/dev", name: "开发" },
+  shopping: { url: "https://rebang.today/shopping", name: "购物" },
   weibo: { url: "https://rebang.today/?tab=weibo", name: "微博" },
   douyin: { url: "https://rebang.today/?tab=douyin", name: "抖音" }
 };
@@ -990,7 +1002,7 @@ var rebangList = async (community, proxy) => {
   const tabs = new Map;
   for (const m of raw.matchAll(/"tabKey":"([^"]+)","name":"([^"]+)"/g))
     tabs.set(m[1], m[2]);
-  return items.slice(0, 30).map((it, i) => {
+  return items.slice(0, 15).map((it, i) => {
     const o = it;
     const title = typeof o.title === "string" ? o.title.trim() : "";
     const url = typeof o.href === "string" && /^https?:/i.test(o.href) ? o.href : typeof o.mobileHref === "string" && /^https?:/i.test(o.mobileHref) ? o.mobileHref : "";
@@ -1340,7 +1352,7 @@ var cachedThread = async (key, proxy, force, load) => {
 var fetchList = async (community, channel, proxy) => {
   if (community === "toutiao")
     return toutiaoList(proxy);
-  if (community === "news" || community === "weibo" || community === "douyin")
+  if (REBANG[community])
     return rebangList(community, proxy);
   if (community === "juejin")
     return juejinList(proxy);
@@ -1424,7 +1436,7 @@ var server = http.createServer((req, res) => {
         return ithomeThread(id, px);
       if (community === "toutiao")
         return hotThread(community, id, px);
-      if (community === "news" || community === "weibo" || community === "douyin")
+      if (REBANG[community])
         return rebangThread(community, id, px);
       return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     }).then(({ thread }) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));

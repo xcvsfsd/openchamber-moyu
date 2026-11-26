@@ -26,6 +26,12 @@
 | Solidot | 官方 RSS | RSS 摘要即正文 |
 | InfoQ 中国 | 官网首页 | 正文 SSR，`ProseMirror` 直抽 |
 | 国内新闻 | rebang.today `/news` | 澎湃 / 凤凰 / 观察者 / 联合早报 / 腾讯混排，带摘要 |
+| 科技 | rebang.today `/tech` | IT之家 / 36氪 / Appinn / 虎嗅 / 吾爱破解混排 |
+| 财经 | rebang.today `/fin` | 同花顺 / 财新 / 第一财经 / 东方财富混排 |
+| 娱乐 | rebang.today `/ent` | 微博 / 抖音 / 豆瓣等混排 |
+| 社区 | rebang.today `/community` | 虎扑 / 贴吧 / NGA / 豆瓣小组混排 |
+| 开发 | rebang.today `/dev` | 吾爱破解 / 掘金 / InfoQ / CSDN 混排 |
+| 购物 | rebang.today `/shopping` | 什么值得买等混排 |
 | 微博 | rebang.today `?tab=weibo` | 热搜词条，✦ 走联网搜索 |
 | 抖音 | rebang.today `?tab=douyin` | 热点，带描述，✦ 走联网搜索 |
 

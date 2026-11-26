@@ -52,7 +52,9 @@ aside{width:100%;display:flex;flex-direction:column;padding:10px 8px;gap:2px;ove
 .cathead .cu{font-weight:400;font-size:11px;color:var(--oc-muted,#999)}
 .nrow .tag{font-size:11px;color:var(--oc-muted,#999);opacity:.75;margin-left:6px;white-space:nowrap}
 #catchips{display:flex;gap:6px;flex-wrap:wrap;padding:2px 10px 4px}
-#catchips button{border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+#catchips button{display:inline-flex;align-items:baseline;gap:4px;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+#catchips .cv{min-width:2.4ch;text-align:right;font-variant-numeric:tabular-nums}
+#catchips button.zero{opacity:.45}
 #catchips button.on{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 button,select,input,textarea{font:inherit}
 .btn{padding:4px 10px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:var(--oc-fg,inherit);cursor:pointer;white-space:nowrap}
@@ -90,7 +92,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.14.5-feedread';
+const BUILD = 'v0.14.6-chips';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -174,7 +176,7 @@ const svc = async (method: string, path: string, body?: string): Promise<{ statu
 
 const srcName = (_c: { name: string }, _ch: { name: string }, _multi: boolean): string => '';
 
-// chips 上的数字是未读数（划过即已读，数字会即时减）
+// chips：固定 16 个（全部 + CATS），只更新数字和选中态，绝不重建——避免换行位置跳动
 function updateChipCounts(): void {
   const counts = new Map<string, number>();
   let all = 0;
@@ -186,24 +188,30 @@ function updateChipCounts(): void {
   }
   for (const b of chipsEl.querySelectorAll<HTMLButtonElement>('[data-cat]')) {
     const cat = b.dataset.cat ?? '';
-    b.textContent = cat === '__all' ? `全部 ${all}` : `${cat} ${counts.get(cat) ?? 0}`;
+    const n = cat === '__all' ? all : (counts.get(cat) ?? 0);
+    const num = b.querySelector('.cv');
+    if (num) num.textContent = String(n);
+    b.classList.toggle('on', cat === '__all' ? selCat === '' : selCat === cat);
+    b.classList.toggle('zero', cat !== '__all' && n === 0);
   }
 }
 
-const paintChips = (cats: string[]): void => {
-  chipsEl.innerHTML = '';
-  if (cats.length === 0) return;
-  const all = document.createElement('button');
-  all.dataset.cat = '__all';
-  all.className = selCat === '' ? 'on' : '';
-  all.onclick = () => { selCat = ''; takeReadSnap(); paintList(); };
-  chipsEl.appendChild(all);
-  for (const c of cats) {
-    const b = document.createElement('button');
-    b.dataset.cat = c;
-    b.className = selCat === c ? 'on' : '';
-    b.onclick = () => { selCat = selCat === c ? '' : c; takeReadSnap(); paintList(); };
-    chipsEl.appendChild(b);
+const paintChips = (): void => {
+  if (chipsEl.childElementCount === 0) {
+    const mk = (cat: string, label: string): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.dataset.cat = cat;
+      b.innerHTML = `<span class="cn">${esc(label)}</span><span class="cv">0</span>`;
+      b.onclick = () => {
+        if (cat === '__all') selCat = '';
+        else selCat = selCat === cat ? '' : cat;
+        takeReadSnap();
+        paintList();
+      };
+      return b;
+    };
+    chipsEl.appendChild(mk('__all', '全部'));
+    for (const c of CATS) chipsEl.appendChild(mk(c, c));
   }
   updateChipCounts();
 };
@@ -349,7 +357,7 @@ const tagOf = (t: Topic): string => {
 const paintList = (): void => {
   const present = [...new Set(topics.map((t) => catMem.get(ckey(t))).filter((c): c is string => !!c))];
   const ordered = CATS.filter((c) => present.includes(c));
-  paintChips(ordered);
+  paintChips();
   const tstr = listAt > 0 ? (() => { const d = new Date(listAt); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; })() : '';
   const cprog = catRunning ? ` · 分类 ${catDone}/${catTotal}` : '';
   ($('tcount') as HTMLElement).textContent = topics.length > 0 ? `${topics.length}${tstr ? ` · 更新 ${tstr}` : ''}${cprog}` : (tstr ? `更新 ${tstr}` : '');

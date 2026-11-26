@@ -70,7 +70,7 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.read .xp{opacity:.3}
 .nrow.read .aisum{opacity:.45}
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
-#cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
+#cfgside input,#cfgside select{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
 #cfgver{padding:2px 10px 6px;font-size:11px}
 </style>
 <div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
@@ -81,6 +81,9 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
     <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
     <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" />
     <button class="btn primary" id="b-save">保存并测试</button>
+    <div class="mut">AI 模型（分类与总结用；与设置里的小模型是同一份配置，改完立即生效）</div>
+    <select id="cfg-model"><option value="__default">读取中…</option></select>
+    <div class="mut" id="model-out"></div>
     <button class="btn" id="b-clearcache" title="删掉分类与总结缓存，用当前模型重算">清空 AI 缓存</button>
     <div class="mut" id="cfg-out"></div>
   </div>
@@ -93,7 +96,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.14.7-webfall';
+const BUILD = 'v0.15.0-modelpick';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -661,6 +664,64 @@ $('b-clearcache').onclick = async (): Promise<void> => {
   }
 };
 
+// AI 模型选择：直接改宿主 settings.json 里的小模型（宿主每次生成都重读，立即生效）
+const loadModelSel = async (): Promise<void> => {
+  const sel = document.querySelector('#cfg-model') as HTMLSelectElement | null;
+  if (!sel) return;
+  try {
+    const r = await svc('GET', '/settings/model');
+    const j = JSON.parse(r.body) as {
+      ok: boolean; useDefault?: boolean; override?: string; error?: string;
+      models?: Array<{ providerID: string; modelID: string }>;
+    };
+    if (!j.ok) { sel.innerHTML = '<option value="__default">读取失败</option>'; return; }
+    sel.innerHTML = '';
+    const def = document.createElement('option');
+    def.value = '__default';
+    def.textContent = '跟随默认模型';
+    def.selected = j.useDefault !== false;
+    sel.appendChild(def);
+    const groups = new Map<string, HTMLOptGroupElement>();
+    for (const m of j.models ?? []) {
+      let g = groups.get(m.providerID);
+      if (!g) {
+        g = document.createElement('optgroup');
+        g.label = m.providerID;
+        groups.set(m.providerID, g);
+        sel.appendChild(g);
+      }
+      const o = document.createElement('option');
+      o.value = `${m.providerID}/${m.modelID}`;
+      o.textContent = m.modelID;
+      if (j.useDefault === false && o.value === j.override) o.selected = true;
+      g.appendChild(o);
+    }
+  } catch {
+    sel.innerHTML = '<option value="__default">service 未就绪</option>';
+  }
+};
+
+const onModelChange = async (): Promise<void> => {
+  const sel = document.querySelector('#cfg-model') as HTMLSelectElement | null;
+  const out = document.querySelector('#model-out');
+  if (!sel || !out) return;
+  const v = sel.value;
+  const slash = v.indexOf('/');
+  const body = v === '__default'
+    ? { useDefault: true }
+    : { useDefault: false, providerID: v.slice(0, slash), modelID: v.slice(slash + 1) };
+  out.textContent = '正在切换…';
+  try {
+    const r = await svc('POST', '/settings/model', JSON.stringify(body));
+    const j = JSON.parse(r.body) as { ok: boolean; error?: string };
+    out.textContent = j.ok ? '已切换，下次总结/分类就用它（想重算旧结果点「清空 AI 缓存」）' : `切换失败：${j.error ?? '未知错误'}`;
+  } catch (e) {
+    out.textContent = `切换失败：${e instanceof Error ? e.message : '未知错误'}`;
+  }
+};
+
+$('cfg-model').onchange = () => void onModelChange();
+
 $('b-save').onclick = async () => {
   const v = (document.querySelector('#cfg-proxy') as HTMLInputElement).value.trim();
   if (v && !/^https?:\/\/.+/.test(v)) { $('cfg-out').textContent = '格式不对，要 http(s)://host:port'; return; }
@@ -694,6 +755,7 @@ host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 // 进面板只读缓存不拉网（提速+省流）：刷新只能点 ↻
 void (async () => {
   await loadPrefs();
+  void loadModelSel();
   try {
     // 总结缓存：整表 + 迁移早期逐条 key（只搬一次，之后不再有逐条 key）
     const ss = await storeGet(SUM_TABLE);

@@ -3,12 +3,59 @@
 // 登录/回复/点赞/通知先按契约返回 need-login，UI 照 moyu 文案提示，不静默失败。
 // 代理：env 优先（HTTPS_PROXY/ALL_PROXY/HTTP_PROXY），直连为主；Cloudflare 场景 service 日志写 stderr。
 import http from 'node:http';
+import { readFile, writeFile, rename } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { COMMUNITIES, type CommunityId, type Post, type Thread, type Topic } from '../shared/types.js';
 import { parseRss } from '../shared/rss.js';
 
 const port = Number(process.env.OPENCHAMBER_SERVICE_PORT);
 const token = process.env.OPENCHAMBER_SERVICE_TOKEN ?? '';
 if (!port || !token) { console.error('OPENCHAMBER_SERVICE_PORT and OPENCHAMBER_SERVICE_TOKEN are required'); process.exit(1); }
+
+// 宿主的小模型配置就在这个文件里，宿主每次生成都会重读，所以改完立即生效
+const DATA_DIR = process.env.OPENCHAMBER_DATA_DIR
+  ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
+  : path.join(os.homedir(), '.config', 'openchamber');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+
+type ModelRef = { providerID: string; modelID: string };
+const readHostSettings = async (): Promise<Record<string, unknown>> => {
+  try {
+    const raw = await readFile(SETTINGS_FILE, 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch { return {}; }
+};
+const modelRefsOf = (value: unknown): ModelRef[] => {
+  if (!Array.isArray(value)) return [];
+  const out: ModelRef[] = [];
+  for (const it of value) {
+    const o = it as { providerID?: unknown; modelID?: unknown };
+    if (typeof o?.providerID === 'string' && typeof o.modelID === 'string' && o.providerID && o.modelID) {
+      out.push({ providerID: o.providerID, modelID: o.modelID });
+    }
+  }
+  return out;
+};
+const modelCatalog = (s: Record<string, unknown>): ModelRef[] => {
+  const seen = new Map<string, ModelRef>();
+  for (const list of [s.favoriteModels, s.recentModels, s.hiddenModels]) {
+    for (const m of modelRefsOf(list)) seen.set(`${m.providerID}/${m.modelID}`, m);
+  }
+  const ov = typeof s.smallModelOverride === 'string' ? s.smallModelOverride.trim() : '';
+  const slash = ov.indexOf('/');
+  if (slash > 0) seen.set(ov, { providerID: ov.slice(0, slash), modelID: ov.slice(slash + 1) });
+  return [...seen.values()].sort((a, b) =>
+    a.providerID === b.providerID ? a.modelID.localeCompare(b.modelID) : a.providerID.localeCompare(b.providerID));
+};
+const writeHostSettings = async (mutate: (s: Record<string, unknown>) => void): Promise<void> => {
+  const s = await readHostSettings();
+  mutate(s);
+  const tmp = `${SETTINGS_FILE}.moyu-tmp`;
+  await writeFile(tmp, `${JSON.stringify(s, null, 2)}\n`, 'utf8');
+  await rename(tmp, SETTINGS_FILE);
+};
 
 const FETCH_TIMEOUT_MS = 15_000;
 const LIST_CACHE_TTL_MS = 30 * 60 * 1000; // 列表/正文缓存 30 分钟；面板点 ↻ 用 force=1 绕过
@@ -816,6 +863,39 @@ const server = http.createServer((req, res) => {
       ({ thread }) => json(res, 200, { ok: true, thread }),
       (e) => json(res, 200, { ok: false, error: netError(e).message }),
     );
+    return;
+  }
+  // 小模型设置：读当前配置 + 可选模型（来自宿主 settings 的收藏/最近/隐藏），并允许切换
+  if (req.method === 'GET' && url.pathname === '/settings/model') {
+    readHostSettings().then((s) => json(res, 200, {
+      ok: true,
+      useDefault: s.smallModelUseDefault !== false,
+      override: typeof s.smallModelOverride === 'string' ? s.smallModelOverride : '',
+      models: modelCatalog(s),
+    }));
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/settings/model') {
+    readBody(req).then(async (body) => {
+      const b = (body ?? {}) as { useDefault?: unknown; providerID?: unknown; modelID?: unknown };
+      const useDefault = b.useDefault !== false;
+      const providerID = typeof b.providerID === 'string' ? b.providerID.trim() : '';
+      const modelID = typeof b.modelID === 'string' ? b.modelID.trim() : '';
+      if (!useDefault && (!providerID || !modelID)) {
+        return json(res, 400, { ok: false, error: 'bad-model' });
+      }
+      try {
+        await writeHostSettings((s) => {
+          s.smallModelUseDefault = useDefault;
+          if (useDefault) return;
+          s.smallModelOverride = `${providerID}/${modelID}`;
+          delete s.smallModelVariant;
+        });
+        return json(res, 200, { ok: true, useDefault, override: useDefault ? '' : `${providerID}/${modelID}` });
+      } catch (e) {
+        return json(res, 200, { ok: false, error: e instanceof Error ? e.message : '写入宿主设置失败' });
+      }
+    });
     return;
   }
   // 联网搜索：无正文源的 ✦ 用（只回标题+摘要，不进原文）

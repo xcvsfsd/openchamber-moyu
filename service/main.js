@@ -1,5 +1,8 @@
 // src/service/main.ts
 import http from "node:http";
+import { readFile, writeFile, rename } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 // src/shared/types.ts
 var COMMUNITIES = [
@@ -453,6 +456,49 @@ if (!port || !token) {
   console.error("OPENCHAMBER_SERVICE_PORT and OPENCHAMBER_SERVICE_TOKEN are required");
   process.exit(1);
 }
+var DATA_DIR = process.env.OPENCHAMBER_DATA_DIR ? path.resolve(process.env.OPENCHAMBER_DATA_DIR) : path.join(os.homedir(), ".config", "openchamber");
+var SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
+var readHostSettings = async () => {
+  try {
+    const raw = await readFile(SETTINGS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+var modelRefsOf = (value) => {
+  if (!Array.isArray(value))
+    return [];
+  const out = [];
+  for (const it of value) {
+    const o = it;
+    if (typeof o?.providerID === "string" && typeof o.modelID === "string" && o.providerID && o.modelID) {
+      out.push({ providerID: o.providerID, modelID: o.modelID });
+    }
+  }
+  return out;
+};
+var modelCatalog = (s) => {
+  const seen = new Map;
+  for (const list of [s.favoriteModels, s.recentModels, s.hiddenModels]) {
+    for (const m of modelRefsOf(list))
+      seen.set(`${m.providerID}/${m.modelID}`, m);
+  }
+  const ov = typeof s.smallModelOverride === "string" ? s.smallModelOverride.trim() : "";
+  const slash = ov.indexOf("/");
+  if (slash > 0)
+    seen.set(ov, { providerID: ov.slice(0, slash), modelID: ov.slice(slash + 1) });
+  return [...seen.values()].sort((a, b) => a.providerID === b.providerID ? a.modelID.localeCompare(b.modelID) : a.providerID.localeCompare(b.providerID));
+};
+var writeHostSettings = async (mutate) => {
+  const s = await readHostSettings();
+  mutate(s);
+  const tmp = `${SETTINGS_FILE}.moyu-tmp`;
+  await writeFile(tmp, `${JSON.stringify(s, null, 2)}
+`, "utf8");
+  await rename(tmp, SETTINGS_FILE);
+};
 var FETCH_TIMEOUT_MS = 15000;
 var LIST_CACHE_TTL_MS = 30 * 60 * 1000;
 var BODY_MAX = 256 * 1024;
@@ -539,10 +585,10 @@ var LD_PATHS = {
 };
 var cdnFix = (s) => s.replace(/https:\/\/linux\.do\/(?=(?:user_avatar|letter_avatar|images\/emoji)\/)/g, "https://cdn.ldstatic.com/");
 var linuxdoList = async (channel, proxy) => {
-  const path = LD_PATHS[channel];
-  if (!path)
+  const path2 = LD_PATHS[channel];
+  if (!path2)
     throw new Error(`linux.do 没有这个板块：${channel}`);
-  const r = await timedFetch(LD + path, proxy);
+  const r = await timedFetch(LD + path2, proxy);
   if (r.status === 403)
     throw new Error("linux.do 暂时拦住了请求（403），过一会儿再试");
   if (r.status === 429)
@@ -645,10 +691,10 @@ var v2checked = async (url, proxy, missing) => {
   }
 };
 var v2exList = async (channel, proxy) => {
-  const path = channel === "hot" ? "/api/topics/hot.json" : channel === "latest" ? "/api/topics/latest.json" : ["programmer", "share", "create", "qna", "jobs"].includes(channel) ? `/api/topics/show.json?node_name=${channel}` : null;
-  if (!path)
+  const path2 = channel === "hot" ? "/api/topics/hot.json" : channel === "latest" ? "/api/topics/latest.json" : ["programmer", "share", "create", "qna", "jobs"].includes(channel) ? `/api/topics/show.json?node_name=${channel}` : null;
+  if (!path2)
     throw new Error(`V2EX 没有这个板块：${channel}`);
-  const data = await v2checked(V2 + path, proxy);
+  const data = await v2checked(V2 + path2, proxy);
   if (!Array.isArray(data))
     throw new Error("V2EX 返回的内容读不懂");
   return data.filter((t) => typeof t.id === "number" && typeof t.title === "string").map((t) => ({
@@ -1441,6 +1487,39 @@ var server = http.createServer((req, res) => {
         return rebangThread(community, id, px);
       return community === "linuxdo" ? linuxdoThread(id, page, px) : v2exThread(id, page, px);
     }).then(({ thread }) => json(res, 200, { ok: true, thread }), (e) => json(res, 200, { ok: false, error: netError(e).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/settings/model") {
+    readHostSettings().then((s) => json(res, 200, {
+      ok: true,
+      useDefault: s.smallModelUseDefault !== false,
+      override: typeof s.smallModelOverride === "string" ? s.smallModelOverride : "",
+      models: modelCatalog(s)
+    }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/settings/model") {
+    readBody(req).then(async (body) => {
+      const b = body ?? {};
+      const useDefault = b.useDefault !== false;
+      const providerID = typeof b.providerID === "string" ? b.providerID.trim() : "";
+      const modelID = typeof b.modelID === "string" ? b.modelID.trim() : "";
+      if (!useDefault && (!providerID || !modelID)) {
+        return json(res, 400, { ok: false, error: "bad-model" });
+      }
+      try {
+        await writeHostSettings((s) => {
+          s.smallModelUseDefault = useDefault;
+          if (useDefault)
+            return;
+          s.smallModelOverride = `${providerID}/${modelID}`;
+          delete s.smallModelVariant;
+        });
+        return json(res, 200, { ok: true, useDefault, override: useDefault ? "" : `${providerID}/${modelID}` });
+      } catch (e) {
+        return json(res, 200, { ok: false, error: e instanceof Error ? e.message : "写入宿主设置失败" });
+      }
+    });
     return;
   }
   if (req.method === "GET" && url.pathname === "/search") {

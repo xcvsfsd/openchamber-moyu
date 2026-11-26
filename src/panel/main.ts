@@ -65,6 +65,9 @@ button:disabled{opacity:.5}
 #msg2{padding:4px 10px}#msg2 .err{margin-top:4px}
 .err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
 .mut{font-size:12px;color:var(--oc-muted,#999)}
+.srclist{display:flex;flex-wrap:wrap;gap:2px 8px;padding:2px 10px 8px;font-size:11.5px;color:var(--oc-muted,#999);opacity:.9}
+.srclist span{white-space:nowrap}
+.srclist .bad{opacity:.55;text-decoration:line-through}
 div.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.read .tt{opacity:.45}
 .nrow.read .xp{opacity:.3}
@@ -87,6 +90,8 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
     <button class="btn" id="b-clearcache" title="删掉分类与总结缓存，用当前模型重算">清空 AI 缓存</button>
     <div class="mut" id="cfg-out"></div>
   </div>
+  <div class="sec">信息来源 <span id="srccount" class="mut"></span></div>
+  <div id="srclist" class="srclist"></div>
   <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
 </aside>
 </div>`;
@@ -96,7 +101,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.15.0-modelpick';
+const BUILD = 'v0.15.1-srclist';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -357,7 +362,22 @@ const tagOf = (t: Topic): string => {
   return out.join('');
 };
 
+const paintSources = (): void => {
+  const box = document.querySelector('#srclist');
+  const cnt = document.querySelector('#srccount');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const c of COMMUNITIES) {
+    const sp = document.createElement('span');
+    if (failed.includes(c.name)) { sp.className = 'bad'; sp.title = '本次刷新没取到'; }
+    sp.textContent = c.name;
+    box.appendChild(sp);
+  }
+  if (cnt) cnt.textContent = `(${COMMUNITIES.length} 个${failed.length > 0 ? `，${failed.length} 个未取到` : ''})`;
+};
+
 const paintList = (): void => {
+  paintSources();
   const present = [...new Set(topics.map((t) => catMem.get(ckey(t))).filter((c): c is string => !!c))];
   const ordered = CATS.filter((c) => present.includes(c));
   paintChips();

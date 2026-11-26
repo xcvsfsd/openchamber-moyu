@@ -90,7 +90,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.14.4-feedfix';
+const BUILD = 'v0.14.5-feedread';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -141,7 +141,7 @@ const saveFeed = (): void => { feedChain = feedChain.then(writeFeed, writeFeed);
 const loadFeed = async (): Promise<boolean> => {
   try {
     const meta = await storeGet(FEED_META) as { v?: unknown; at?: unknown; failed?: unknown; parts?: unknown } | undefined;
-    if (!meta || meta.v !== FEED_VER || typeof meta.at !== 'number' || typeof meta.parts !== 'number') return false;
+    if (!meta || typeof meta.at !== 'number' || typeof meta.parts !== 'number') return false;
     const n = meta.parts as number;
     if (n < 1 || n > 40) return false;
     const bufs: string[] = [];
@@ -151,7 +151,8 @@ const loadFeed = async (): Promise<boolean> => {
       bufs.push(p);
     }
     const d = JSON.parse(bufs.join('')) as { at?: unknown; failed?: unknown; rows?: unknown };
-    if (typeof d.at !== 'number' || !Array.isArray(d.rows) || d.rows.length === 0) return false;
+    // 一致性校验：meta 和内容必须是同一次快照（防交错写导致一半新一半旧）
+    if (typeof d.at !== 'number' || d.at !== meta.at || !Array.isArray(d.rows) || d.rows.length === 0) return false;
     listAt = d.at;
     failed = Array.isArray(d.failed) ? (d.failed as string[]) : [];
     topics = (d.rows as unknown[][]).map((r) => ({

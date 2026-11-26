@@ -461,14 +461,29 @@ if (!port || !token) {
 }
 var DATA_DIR = process.env.OPENCHAMBER_DATA_DIR ? path.resolve(process.env.OPENCHAMBER_DATA_DIR) : path.join(os.homedir(), ".config", "openchamber");
 var SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
-var readHostSettings = async () => {
+var PREFS_FILE = path.join(DATA_DIR, "preferences.json");
+var readJsonObject = async (file) => {
   try {
-    const raw = await readFile(SETTINGS_FILE, "utf8");
+    const raw = await readFile(file, "utf8");
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
   }
+};
+var readHostSettings = async () => readJsonObject(SETTINGS_FILE);
+var readPrefs = async () => readJsonObject(PREFS_FILE);
+var effectiveSmallModel = async () => {
+  const s = await readHostSettings();
+  const prefs = await readPrefs();
+  const fields = prefs.fields && typeof prefs.fields === "object" ? prefs.fields : {};
+  const pick = (k) => {
+    const f = fields[k];
+    return f && typeof f === "object" && "value" in f ? f.value : s[k];
+  };
+  const useDefault = pick("smallModelUseDefault") !== false;
+  const raw = pick("smallModelOverride");
+  return { useDefault, override: typeof raw === "string" ? raw.trim() : "" };
 };
 var mtimeOf = (p) => {
   try {
@@ -500,13 +515,28 @@ var modelCatalog = (s) => {
     seen.set(ov, { providerID: ov.slice(0, slash), modelID: ov.slice(slash + 1) });
   return [...seen.values()].sort((a, b) => a.providerID === b.providerID ? a.modelID.localeCompare(b.modelID) : a.providerID.localeCompare(b.providerID));
 };
-var writeHostSettings = async (mutate) => {
-  const s = await readHostSettings();
-  mutate(s);
-  const tmp = `${SETTINGS_FILE}.moyu-tmp`;
-  await writeFile(tmp, `${JSON.stringify(s, null, 2)}
+var writeJsonAtomic = async (file, value) => {
+  const tmp = `${file}.moyu-tmp`;
+  await writeFile(tmp, `${JSON.stringify(value, null, 2)}
 `, "utf8");
-  await rename(tmp, SETTINGS_FILE);
+  await rename(tmp, file);
+};
+var writeSmallModel = async (useDefault, ref) => {
+  const now = Date.now();
+  const settings = await readHostSettings();
+  settings.smallModelUseDefault = useDefault;
+  if (useDefault)
+    delete settings.smallModelOverride;
+  else
+    settings.smallModelOverride = ref;
+  delete settings.smallModelVariant;
+  await writeJsonAtomic(SETTINGS_FILE, settings);
+  const prefs = await readPrefs();
+  const fields = prefs.fields && typeof prefs.fields === "object" ? prefs.fields : {};
+  fields.smallModelUseDefault = { updatedAt: now, value: useDefault };
+  fields.smallModelOverride = { updatedAt: now, value: useDefault ? "" : ref };
+  fields.smallModelVariant = { updatedAt: now, value: "" };
+  await writeJsonAtomic(PREFS_FILE, { ...prefs, fields });
 };
 var FETCH_TIMEOUT_MS = 15000;
 var LIST_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -1493,12 +1523,12 @@ var server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && url.pathname === "/settings/model") {
-    readHostSettings().then((s) => json(res, 200, {
+    Promise.all([readHostSettings(), effectiveSmallModel()]).then(([s, eff]) => json(res, 200, {
       ok: true,
-      useDefault: s.smallModelUseDefault !== false,
-      override: typeof s.smallModelOverride === "string" ? s.smallModelOverride : "",
+      useDefault: eff.useDefault,
+      override: eff.override,
       models: modelCatalog(s),
-      mtime: mtimeOf(SETTINGS_FILE)
+      mtime: Math.max(mtimeOf(SETTINGS_FILE), mtimeOf(PREFS_FILE))
     }));
     return;
   }
@@ -1512,19 +1542,14 @@ var server = http.createServer((req, res) => {
         return json(res, 400, { ok: false, error: "bad-model" });
       }
       try {
-        await writeHostSettings((s) => {
-          s.smallModelUseDefault = useDefault;
-          if (useDefault)
-            return;
-          s.smallModelOverride = `${providerID}/${modelID}`;
-          delete s.smallModelVariant;
-        });
-        const check = await readHostSettings();
+        const ref = `${providerID}/${modelID}`;
+        await writeSmallModel(useDefault, ref);
+        const eff = await effectiveSmallModel();
         return json(res, 200, {
           ok: true,
-          useDefault: check.smallModelUseDefault !== false,
-          override: typeof check.smallModelOverride === "string" ? check.smallModelOverride : "",
-          mtime: mtimeOf(SETTINGS_FILE)
+          useDefault: eff.useDefault,
+          override: eff.override,
+          mtime: Math.max(mtimeOf(SETTINGS_FILE), mtimeOf(PREFS_FILE))
         });
       } catch (e) {
         return json(res, 200, { ok: false, error: e instanceof Error ? e.message : "写入宿主设置失败" });

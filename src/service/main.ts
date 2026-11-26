@@ -19,14 +19,34 @@ const DATA_DIR = process.env.OPENCHAMBER_DATA_DIR
   ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
   : path.join(os.homedir(), '.config', 'openchamber');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+// 宿主的读取顺序是 preferences.json 覆盖 settings.json，所以两处都要写，否则永远读到旧值
+const PREFS_FILE = path.join(DATA_DIR, 'preferences.json');
 
 type ModelRef = { providerID: string; modelID: string };
-const readHostSettings = async (): Promise<Record<string, unknown>> => {
+const readJsonObject = async (file: string): Promise<Record<string, unknown>> => {
   try {
-    const raw = await readFile(SETTINGS_FILE, 'utf8');
+    const raw = await readFile(file, 'utf8');
     const parsed: unknown = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
   } catch { return {}; }
+};
+const readHostSettings = async (): Promise<Record<string, unknown>> => readJsonObject(SETTINGS_FILE);
+const readPrefs = async (): Promise<Record<string, unknown>> => readJsonObject(PREFS_FILE);
+
+// 生效值 = settings.json 被 preferences.json 的 fields 覆盖（与宿主 readSettingsFromDisk 一致）
+const effectiveSmallModel = async (): Promise<{ useDefault: boolean; override: string }> => {
+  const s = await readHostSettings();
+  const prefs = await readPrefs();
+  const fields = (prefs.fields && typeof prefs.fields === 'object')
+    ? (prefs.fields as Record<string, { value?: unknown } | undefined>)
+    : {};
+  const pick = (k: string): unknown => {
+    const f = fields[k];
+    return f && typeof f === 'object' && 'value' in f ? f.value : s[k];
+  };
+  const useDefault = pick('smallModelUseDefault') !== false;
+  const raw = pick('smallModelOverride');
+  return { useDefault, override: typeof raw === 'string' ? raw.trim() : '' };
 };
 const mtimeOf = (p: string): number => {
   try { return Math.round(require('node:fs').statSync(p).mtimeMs); } catch { return 0; }
@@ -54,12 +74,27 @@ const modelCatalog = (s: Record<string, unknown>): ModelRef[] => {
   return [...seen.values()].sort((a, b) =>
     a.providerID === b.providerID ? a.modelID.localeCompare(b.modelID) : a.providerID.localeCompare(b.providerID));
 };
-const writeHostSettings = async (mutate: (s: Record<string, unknown>) => void): Promise<void> => {
-  const s = await readHostSettings();
-  mutate(s);
-  const tmp = `${SETTINGS_FILE}.moyu-tmp`;
-  await writeFile(tmp, `${JSON.stringify(s, null, 2)}\n`, 'utf8');
-  await rename(tmp, SETTINGS_FILE);
+const writeJsonAtomic = async (file: string, value: unknown): Promise<void> => {
+  const tmp = `${file}.moyu-tmp`;
+  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  await rename(tmp, file);
+};
+// 小模型：settings.json 和 preferences.json 都写。后者优先级更高，只写前者等于没改。
+const writeSmallModel = async (useDefault: boolean, ref: string): Promise<void> => {
+  const now = Date.now();
+  const settings = await readHostSettings();
+  settings.smallModelUseDefault = useDefault;
+  if (useDefault) delete settings.smallModelOverride;
+  else settings.smallModelOverride = ref;
+  delete settings.smallModelVariant;
+  await writeJsonAtomic(SETTINGS_FILE, settings);
+
+  const prefs = await readPrefs();
+  const fields = (prefs.fields && typeof prefs.fields === 'object') ? (prefs.fields as Record<string, unknown>) : {};
+  fields.smallModelUseDefault = { updatedAt: now, value: useDefault };
+  fields.smallModelOverride = { updatedAt: now, value: useDefault ? '' : ref };
+  fields.smallModelVariant = { updatedAt: now, value: '' };
+  await writeJsonAtomic(PREFS_FILE, { ...prefs, fields });
 };
 
 const FETCH_TIMEOUT_MS = 15_000;
@@ -871,12 +906,12 @@ const server = http.createServer((req, res) => {
   }
   // 小模型设置：读当前配置 + 可选模型（来自宿主 settings 的收藏/最近/隐藏），并允许切换
   if (req.method === 'GET' && url.pathname === '/settings/model') {
-    readHostSettings().then((s) => json(res, 200, {
+    Promise.all([readHostSettings(), effectiveSmallModel()]).then(([s, eff]) => json(res, 200, {
       ok: true,
-      useDefault: s.smallModelUseDefault !== false,
-      override: typeof s.smallModelOverride === 'string' ? s.smallModelOverride : '',
+      useDefault: eff.useDefault,
+      override: eff.override,
       models: modelCatalog(s),
-      mtime: mtimeOf(SETTINGS_FILE),
+      mtime: Math.max(mtimeOf(SETTINGS_FILE), mtimeOf(PREFS_FILE)),
     }));
     return;
   }
@@ -890,19 +925,15 @@ const server = http.createServer((req, res) => {
         return json(res, 400, { ok: false, error: 'bad-model' });
       }
       try {
-        await writeHostSettings((s) => {
-          s.smallModelUseDefault = useDefault;
-          if (useDefault) return;
-          s.smallModelOverride = `${providerID}/${modelID}`;
-          delete s.smallModelVariant;
-        });
-        // 写完立刻回读确认：宿主设置界面可能随后用内存旧值覆盖，这里返回的是落盘实况
-        const check = await readHostSettings();
+        const ref = `${providerID}/${modelID}`;
+        await writeSmallModel(useDefault, ref);
+        // 回读“生效值”（preferences 覆盖 settings 之后的结果），不是我以为写了什么
+        const eff = await effectiveSmallModel();
         return json(res, 200, {
           ok: true,
-          useDefault: check.smallModelUseDefault !== false,
-          override: typeof check.smallModelOverride === 'string' ? check.smallModelOverride : '',
-          mtime: mtimeOf(SETTINGS_FILE),
+          useDefault: eff.useDefault,
+          override: eff.override,
+          mtime: Math.max(mtimeOf(SETTINGS_FILE), mtimeOf(PREFS_FILE)),
         });
       } catch (e) {
         return json(res, 200, { ok: false, error: e instanceof Error ? e.message : '写入宿主设置失败' });

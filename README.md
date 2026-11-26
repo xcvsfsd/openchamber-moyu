@@ -98,7 +98,8 @@ https://github.com/xcvsfsd/openchamber-moyu
 
 面板配置区的「AI 模型」下拉可直接切换分类 / 总结用的模型，选项来自宿主 `settings.json` 里的收藏、最近、隐藏模型（按 provider 分组）。
 
-- 它改的是同一份 `smallModelUseDefault` / `smallModelOverride`，宿主每次生成都会重读，**改完立即生效**
+- 宿主读配置的顺序是 `preferences.json` **覆盖** `settings.json`，所以这里两处一起写；只改 `settings.json` 会被 preferences 里的旧值盖住（表现为“显示切换成功、实际还用旧模型”）
+- 宿主每次生成都会重读配置，**改完立即生效**；面板显示的是两份合并后的生效值
 - 宿主设置界面里动过其它项时，可能用内存里的旧值覆盖这份文件；下拉以文件为准，重选一次即可
 - 换模型不会自动重算旧结果，要重算点「清空 AI 缓存」
 

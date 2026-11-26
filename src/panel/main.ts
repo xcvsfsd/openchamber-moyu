@@ -50,7 +50,7 @@ aside{width:100%;display:flex;flex-direction:column;padding:10px 8px;gap:2px;ove
 .nrow .xp{display:block;font-size:12.5px;opacity:.8;margin-top:1px}
 .cathead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:16px 10px 6px;font-weight:700;font-size:13px;color:var(--oc-fg,inherit);border-bottom:1px solid var(--oc-border,#8883);margin-bottom:2px}
 .cathead .cu{font-weight:400;font-size:11px;color:var(--oc-muted,#999)}
-.nrow .tag{font-size:11px;color:var(--oc-muted,#999);opacity:.75}
+.nrow .tag{font-size:11px;color:var(--oc-muted,#999);opacity:.75;margin-left:6px;white-space:nowrap}
 #catchips{display:flex;gap:6px;flex-wrap:wrap;padding:2px 10px 4px}
 #catchips button{border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
 #catchips button.on{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
@@ -90,7 +90,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.14.1-sumdim';
+const BUILD = 'v0.14.2-inline';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -367,7 +367,7 @@ const paintList = (): void => {
       const d = document.createElement('div');
       d.className = 'nrow' + (readSet.has(rkey(t)) ? ' read' : '');
       const tag = tagOf(t);
-      const tagEl = tag ? `<br><span class="tag">${esc(tag)}</span>` : '';
+      const tagEl = tag ? `<span class="tag">${esc(tag)}</span>` : '';
       const xcp = t.excerpt ? `<br><span class="xp">${esc(t.excerpt)}</span>` : '';
       d.innerHTML = `<span class="tt">${esc(t.title)}${tagEl}${xcp}</span>`;
       d.onmouseenter = (): void => { markRead(t); d.classList.add('read'); };

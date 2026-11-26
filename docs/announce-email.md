@@ -24,7 +24,7 @@ Highlights:
 - Everything cached locally: entering the panel makes no network requests; refresh is manual; AI results and read state survive restarts with a 7-day TTL
 - Proxy configurable in-panel, because the host strips env vars when starting the service
 
-Screenshots: https://github.com/xcvsfsd/openchamber-moyu#截图
+Screenshots are at the top of the README: https://github.com/xcvsfsd/openchamber-moyu
 
 Install (Settings → Extensions):
 

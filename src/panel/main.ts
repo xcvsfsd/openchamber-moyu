@@ -87,7 +87,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.13.1-unread';
+const BUILD = 'v0.13.3-ttl';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -198,16 +198,42 @@ const paintChips = (cats: string[]): void => {
   updateChipCounts();
 };
 
-const ckey = (t: Topic): string => `moyu:cat:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
+// 标题指纹：分类/总结/已读都按它记（序号型榜单刷新后 id 会变，标题不变）
+const tid = (s: string): string => {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.codePointAt(0)!) >>> 0;
+  return h.toString(36);
+};
+const tkey = (t: Topic): string => tid(t.title.slice(0, 30));
+
+const ckey = (t: Topic): string => `moyu:cat:${tkey(t)}`;
 
 // 总结缓存：整表存（上限 120 条），启动预载，列表直接铺出来，不用再点 ✦
-const sumKey = (t: Topic): string => `moyu:csum:${t.community}:${t.id}`;
+const sumKey = (t: Topic): string => `moyu:csum:${tkey(t)}`;
+// 早期按 源+id 存的总结：读时兜底并迁到新 key（旧 key 里没有标题，只能这样接）
+const legacySumKey = (t: Topic): string => `moyu:csum:${t.community}:${t.id}`;
 const sumMem = new Map<string, string>();
+const sumTime = new Map<string, number>();
 const SUM_TABLE = 'moyu:csums';
-const SUM_MAX = 120;
+const SUM_MAX = 100;
+// 分类/总结/已读的保留期：7 天没再出现过就清掉（另有容量上限兜底）
+const AI_TTL_MS = 7 * 24 * 3600 * 1000;
 const saveSums = (): void => {
-  const keep = [...sumMem.entries()].slice(-SUM_MAX);
-  void storeSet(SUM_TABLE, Object.fromEntries(keep));
+  const obj: Record<string, [string, number]> = {};
+  for (const [k, v] of sumMem) obj[k] = [v, sumTime.get(k) ?? Date.now()];
+  const keys = Object.keys(obj);
+  const keep = keys.length > SUM_MAX ? keys.slice(-SUM_MAX) : keys;
+  const out: Record<string, [string, number]> = {};
+  for (const k of keep) out[k] = obj[k]!;
+  void storeSet(SUM_TABLE, out);
+};
+const sumOf = (t: Topic): string => {
+  const k = sumKey(t);
+  const hit = sumMem.get(k);
+  if (hit) return hit;
+  const old = sumMem.get(legacySumKey(t));
+  if (old) { sumMem.set(k, old); sumTime.set(k, Date.now()); saveSums(); return old; }
+  return '';
 };
 
 // 已读：移入标题即标记，字体变淡；按“源+标题指纹”记，序号型榜单刷新后也能对上
@@ -216,26 +242,29 @@ const READ_MAX = 800;
 const readSet = new Set<string>();
 const readList: string[] = [];
 let readTimer: ReturnType<typeof setTimeout> | null = null;
-const tid = (s: string): string => {
-  let h = 0;
-  for (const c of s) h = (h * 31 + c.codePointAt(0)!) >>> 0;
-  return h.toString(36);
+// 只看标题：同一条新闻换了来源（去重后保留的那条可能来自别的站）也算已读
+const rkey = (t: Topic): string => tid(t.title);
+const readTime = new Map<string, number>();
+const flushRead = (): void => {
+  if (readTimer) { clearTimeout(readTimer); readTimer = null; }
+  void storeSet(READ_KEY, readList.map((k) => [k, readTime.get(k) ?? Date.now()]));
 };
-const rkey = (t: Topic): string => `${t.community}:${tid(t.title)}`;
 const markRead = (t: Topic): void => {
   const k = rkey(t);
   if (readSet.has(k)) return;
   readSet.add(k);
   readList.push(k);
+  readTime.set(k, Date.now());
   if (readList.length > READ_MAX) {
     const drop = readList.splice(0, readList.length - READ_MAX);
-    for (const d of drop) readSet.delete(d);
+    for (const d of drop) { readSet.delete(d); readTime.delete(d); }
   }
-  if (!readTimer) {
-    readTimer = setTimeout(() => { readTimer = null; void storeSet(READ_KEY, readList); }, 1000);
-  }
+  // 300ms 合并写；页面隐藏/关闭时立即落盘，避免刚划过就关面板丢状态
+  if (!readTimer) readTimer = setTimeout(() => { readTimer = null; void storeSet(READ_KEY, readList); }, 300);
   updateChipCounts();
 };
+window.addEventListener('pagehide', flushRead);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushRead(); });
 
 // 跨源去重：同一事件在不同站标题措辞不同，只靠完全相等不够
 const normTitle = (s: string): string =>
@@ -316,7 +345,7 @@ const paintList = (): void => {
       b.onclick = () => void summarize(t, d, b);
       d.appendChild(b);
       // 之前总结过的，直接铺出来
-      const cachedSum = sumMem.get(sumKey(t));
+      const cachedSum = sumOf(t);
       if (cachedSum) {
         const se = document.createElement('div');
         se.className = 'aisum';
@@ -328,13 +357,44 @@ const paintList = (): void => {
   }
 };
 
-// AI 分类：多路并发，25→30 条一批调小模型，按标题归类；结果进内存 map + 整表持久化
+// AI 分类：多路并发，30 条一批调小模型，按标题归类；结果进内存 map + 整表持久化
+const catTime = new Map<string, number>();
+const setCat = (k: string, v: string): void => { catMem.set(k, v); catTime.set(k, Date.now()); };
 const saveCats = (): void => {
-  let obj = Object.fromEntries(catMem);
+  const obj: Record<string, [string, number]> = {};
+  for (const [k, v] of catMem) obj[k] = [v, catTime.get(k) ?? Date.now()];
   const keys = Object.keys(obj);
-  if (keys.length > 1000) obj = Object.fromEntries(keys.slice(-1000).map((k) => [k, obj[k]]));
-  void storeSet('moyu:cats', obj);
+  const keep = keys.length > 1000 ? keys.slice(-1000) : keys;
+  const out: Record<string, [string, number]> = {};
+  for (const k of keep) out[k] = obj[k]!;
+  void storeSet('moyu:cats', out);
 };
+const pruneAiCache = (): void => {
+  const now = Date.now();
+  const cut = now - AI_TTL_MS;
+  // 当前列表里还在的续期，避免"每天都在用的条目"被当成旧数据清掉
+  for (const t of topics) {
+    const ck = ckey(t);
+    if (catMem.has(ck)) catTime.set(ck, now);
+    const sk = sumKey(t);
+    if (sumMem.has(sk)) sumTime.set(sk, now);
+    const rk = rkey(t);
+    if (readSet.has(rk)) readTime.set(rk, now);
+  }
+  let catDirty = false;
+  for (const [k, ts] of catTime) if (ts < cut) { catMem.delete(k); catTime.delete(k); catDirty = true; }
+  if (catDirty) saveCats();
+  let sumDirty = false;
+  for (const [k, ts] of sumTime) if (ts < cut) { sumMem.delete(k); sumTime.delete(k); sumDirty = true; }
+  if (sumDirty) saveSums();
+  let readDirty = false;
+  for (let i = readList.length - 1; i >= 0; i--) {
+    const k = readList[i]!;
+    if ((readTime.get(k) ?? 0) < cut) { readList.splice(i, 1); readSet.delete(k); readTime.delete(k); readDirty = true; }
+  }
+  if (readDirty) flushRead();
+};
+
 const classifyAll = async (run: number): Promise<void> => {
   if (catsOff) return;
   const pending = topics.filter((t) => !catMem.has(ckey(t)));
@@ -371,9 +431,9 @@ const classifyAll = async (run: number): Promise<void> => {
         // 模型跑偏（漏行/重编号）时整批标“其他”，避免错位串行
         const parsed = got.filter(Boolean).length;
         if (parsed < Math.ceil(batch.length * 0.6)) {
-          for (const t of batch) catMem.set(ckey(t), '其他');
+          for (const t of batch) setCat(ckey(t), '其他');
         } else {
-          batch.forEach((t, j) => catMem.set(ckey(t), got[j] ?? '其他'));
+          batch.forEach((t, j) => setCat(ckey(t), got[j] ?? '其他'));
         }
         saveCats();
       } catch (e) {
@@ -386,7 +446,7 @@ const classifyAll = async (run: number): Promise<void> => {
           return;
         }
         // 单批失败：全标其他，不重试
-        for (const t of batch) catMem.set(ckey(t), '其他');
+        for (const t of batch) setCat(ckey(t), '其他');
       }
       catDone = Math.min(pending.length, catDone + batch.length);
       if (run !== feedRun) return;
@@ -412,7 +472,7 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
   const label = btn.textContent;
   btn.textContent = '…';
   try {
-    let s = sumMem.get(key) ?? '';
+    let s = sumOf(t);
     if (!s) {
       // rebang 源自带摘要：直接用摘要总结，不额外请求正文
       let text = '';
@@ -467,6 +527,7 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
         if (!s) throw new Error('小模型没有返回总结');
       }
       sumMem.set(key, s);
+      sumTime.set(key, Date.now());
       saveSums();
     }
     const d = document.createElement('div');
@@ -537,7 +598,9 @@ $('b-clearcache').onclick = async (): Promise<void> => {
     const drop = keys.filter((k) => /^moyu:(cat|csums|csum|cats)(:|$)/.test(k));
     await Promise.all(drop.map((k) => host.storage.delete(k).catch(() => undefined)));
     catMem.clear();
+    catTime.clear();
     sumMem.clear();
+    sumTime.clear();
     catsOff = false;
     catDone = 0; catTotal = 0; catRunning = false;
     out.textContent = `已清 ${drop.length} 条，正在用当前模型重算分类…`;
@@ -587,7 +650,13 @@ void (async () => {
     const ss = await storeGet(SUM_TABLE);
     if (ss && typeof ss === 'object') {
       for (const [k, v] of Object.entries(ss as Record<string, unknown>)) {
-        if (typeof v === 'string' && v) sumMem.set(k, v);
+        if (Array.isArray(v) && typeof v[0] === 'string' && v[0]) {
+          sumMem.set(k, v[0]);
+          sumTime.set(k, Number(v[1]) || Date.now());
+        } else if (typeof v === 'string' && v) {
+          sumMem.set(k, v);
+          sumTime.set(k, Date.now());
+        }
       }
     }
     try {
@@ -597,7 +666,7 @@ void (async () => {
         for (const k of legacy) {
           if (sumMem.has(k)) { await host.storage.delete(k).catch(() => undefined); continue; }
           const v = await host.storage.get(k);
-          if (typeof v === 'string' && v) sumMem.set(k, v);
+          if (typeof v === 'string' && v) { sumMem.set(k, v); sumTime.set(k, Date.now()); }
           await host.storage.delete(k).catch(() => undefined);
         }
         saveSums();
@@ -605,24 +674,50 @@ void (async () => {
     } catch { /* 迁移失败不影响使用 */ }
     const rr = await storeGet(READ_KEY);
     if (Array.isArray(rr)) {
-      for (const k of rr) {
-        if (typeof k !== 'string' || readSet.has(k)) continue;
-        readSet.add(k); readList.push(k);
+      // 旧格式是“源:指纹”，迁成纯标题指纹（跨源也保持已读）
+      let migrated = false;
+      for (const item of rr) {
+        let k = '';
+        let ts = Date.now();
+        if (typeof item === 'string') { k = item; migrated = true; }
+        else if (Array.isArray(item) && typeof item[0] === 'string') { k = item[0]; ts = Number(item[1]) || Date.now(); }
+        if (!k) continue;
+        const kk = k.includes(':') ? k.split(':').pop()! : k;
+        if (k !== kk) migrated = true;
+        if (!kk || readSet.has(kk)) continue;
+        readSet.add(kk); readList.push(kk); readTime.set(kk, ts);
       }
+      if (migrated) flushRead();
     }
     const cm = await storeGet('moyu:cats');
     if (cm && typeof cm === 'object') {
-      for (const [k, v] of Object.entries(cm as Record<string, unknown>)) {
-        if (typeof v === 'string') catMem.set(k, v);
+      // 迁移旧分类 key（moyu:cat:源:id:标题 → moyu:cat:标题指纹），刷新/换源都能复用
+      let migrated = false;
+      for (const [k, rawV] of Object.entries(cm as Record<string, unknown>)) {
+        const cat = Array.isArray(rawV) ? (typeof rawV[0] === 'string' ? rawV[0] : '') : typeof rawV === 'string' ? rawV : '';
+        if (!cat) continue;
+        const ts = Array.isArray(rawV) ? (Number(rawV[1]) || Date.now()) : Date.now();
+        const parts = k.split(':');
+        if (parts.length === 3) { catMem.set(k, cat); catTime.set(k, ts); continue; }
+        if (parts.length >= 5 && parts[0] === 'moyu' && parts[1] === 'cat') {
+          const title30 = parts.slice(4).join(':').slice(0, 30);
+          if (!title30) continue;
+          catMem.set(`moyu:cat:${tid(title30)}`, cat);
+          catTime.set(`moyu:cat:${tid(title30)}`, ts);
+          migrated = true;
+        }
       }
+      if (migrated) saveCats();
     }
     const fd = await loadFeed();
     if (fd) {
+      pruneAiCache();
       paintList();
       void classifyAll(++feedRun);
       return;
     }
   } catch { /* 缓存坏了就走正常拉取 */ }
+  pruneAiCache();
   // 首次没有本地列表：用 service 侧缓存（可能刚有人刷过），不强制打网络
   void pollAll(false);
 })();

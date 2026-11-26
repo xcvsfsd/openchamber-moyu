@@ -87,7 +87,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.12.1-allboards';
+const BUILD = 'v0.13.0-sumcache';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -183,6 +183,16 @@ const paintChips = (cats: string[]): void => {
 };
 
 const ckey = (t: Topic): string => `moyu:cat:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
+
+// 总结缓存：整表存（上限 120 条），启动预载，列表直接铺出来，不用再点 ✦
+const sumKey = (t: Topic): string => `moyu:csum:${t.community}:${t.id}`;
+const sumMem = new Map<string, string>();
+const SUM_TABLE = 'moyu:csums';
+const SUM_MAX = 120;
+const saveSums = (): void => {
+  const keep = [...sumMem.entries()].slice(-SUM_MAX);
+  void storeSet(SUM_TABLE, Object.fromEntries(keep));
+};
 
 // 已读：移入标题即标记，字体变淡；按“源+标题指纹”记，序号型榜单刷新后也能对上
 const READ_KEY = 'moyu:read';
@@ -288,6 +298,14 @@ const paintList = (): void => {
       b.textContent = '✦';
       b.onclick = () => void summarize(t, d, b);
       d.appendChild(b);
+      // 之前总结过的，直接铺出来
+      const cachedSum = sumMem.get(sumKey(t));
+      if (cachedSum) {
+        const se = document.createElement('div');
+        se.className = 'aisum';
+        se.textContent = `✦ ${cachedSum}`;
+        d.appendChild(se);
+      }
       topicsEl.appendChild(d);
     }
   }
@@ -372,13 +390,12 @@ const htmlText = (html: string): string =>
 const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Promise<void> => {
   const old = row.querySelector('.aisum');
   if (old) { old.remove(); return; } // 再点收起
-  const key = `moyu:csum:${t.community}:${t.id}`;
+  const key = sumKey(t);
   btn.disabled = true;
   const label = btn.textContent;
   btn.textContent = '…';
   try {
-    const hit = await storeGet(key);
-    let s = typeof hit === 'string' && hit ? hit : '';
+    let s = sumMem.get(key) ?? '';
     if (!s) {
       // rebang 源自带摘要：直接用摘要总结，不额外请求正文
       let text = '';
@@ -432,7 +449,8 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
         s = g.text.trim().slice(0, 500);
         if (!s) throw new Error('小模型没有返回总结');
       }
-      await storeSet(key, s);
+      sumMem.set(key, s);
+      saveSums();
     }
     const d = document.createElement('div');
     d.className = 'aisum';
@@ -499,13 +517,15 @@ $('b-clearcache').onclick = async (): Promise<void> => {
   out.textContent = '正在清空 AI 缓存…';
   try {
     const keys = await host.storage.keys();
-    const drop = keys.filter((k) => /^moyu:(cat|csum|cats)(:|$)/.test(k));
+    const drop = keys.filter((k) => /^moyu:(cat|csums|csum|cats)(:|$)/.test(k));
     await Promise.all(drop.map((k) => host.storage.delete(k).catch(() => undefined)));
     catMem.clear();
+    sumMem.clear();
     catsOff = false;
     catDone = 0; catTotal = 0; catRunning = false;
     out.textContent = `已清 ${drop.length} 条，正在用当前模型重算分类…`;
     void classifyAll(++feedRun);
+    paintList();
     await host.toast({ kind: 'success', message: `已清空 AI 缓存（${drop.length} 条）` });
   } catch (e) {
     out.textContent = `清空失败：${e instanceof Error ? e.message : '未知错误'}`;
@@ -546,6 +566,26 @@ host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 void (async () => {
   await loadPrefs();
   try {
+    // 总结缓存：整表 + 迁移早期逐条 key（只搬一次，之后不再有逐条 key）
+    const ss = await storeGet(SUM_TABLE);
+    if (ss && typeof ss === 'object') {
+      for (const [k, v] of Object.entries(ss as Record<string, unknown>)) {
+        if (typeof v === 'string' && v) sumMem.set(k, v);
+      }
+    }
+    try {
+      const keys = await host.storage.keys();
+      const legacy = keys.filter((k) => k.startsWith('moyu:csum:')).slice(0, 300);
+      if (legacy.length > 0) {
+        for (const k of legacy) {
+          if (sumMem.has(k)) { await host.storage.delete(k).catch(() => undefined); continue; }
+          const v = await host.storage.get(k);
+          if (typeof v === 'string' && v) sumMem.set(k, v);
+          await host.storage.delete(k).catch(() => undefined);
+        }
+        saveSums();
+      }
+    } catch { /* 迁移失败不影响使用 */ }
     const rr = await storeGet(READ_KEY);
     if (Array.isArray(rr)) {
       for (const k of rr) {

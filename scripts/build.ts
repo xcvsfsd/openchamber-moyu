@@ -1,6 +1,6 @@
 // 构建：本目录即为可安装扩展（panel + service 直出，无需打包）。
 // OpenChamber 装扩展不构建，所以 panel/main.js、service/main.js 必须提交。
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 

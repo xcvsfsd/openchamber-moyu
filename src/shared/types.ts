@@ -17,21 +17,6 @@ export type Post = {
   likes: number | null; liked?: boolean; byAuthor: boolean;
 };
 export type Thread = { topic: Topic; opening: Post | null; posts: Post[]; page: number; more: boolean };
-export type ForumAccount = { username: string; unreadNotifications?: number; userId?: number };
-export type ReplyResult =
-  | { state: 'sent'; message: string | null }
-  | { state: 'pending'; message: string | null }
-  | { state: 'failed'; failure: { kind: 'login' | 'rate-limit' | 'unconfirmed' | 'rejected'; message: string; retryAfter?: number } };
-export type LikeResult =
-  | { state: 'done'; liked: boolean; likes: number | null }
-  | { state: 'failed'; failure: ReplyResult extends never ? never : { kind: 'login' | 'rate-limit' | 'unconfirmed' | 'rejected'; message: string; retryAfter?: number } };
-export type ForumNotification = {
-  id: string; kind: 'reply' | 'mention' | 'like' | 'quote' | 'message' | 'other';
-  actor: string | null; title: string; excerpt: string | null;
-  time: number | null; timeLabel: string | null; read: boolean | null;
-  url: string; target: { topic: Topic; floor?: number; page?: number; postId?: string } | null;
-};
-
 export const COMMUNITIES: CommunityInfo[] = [
   {
     id: 'linuxdo', name: 'linux.do',

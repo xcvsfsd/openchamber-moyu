@@ -2,7 +2,7 @@
 // 一次拉全社区全频道，标题列表按 AI 分类成组；点 ✦ 拉正文总结。
 import { connectHost } from '@openchamber/sdk';
 import { applyHostReady } from '@openchamber/sdk/ui';
-import type { CommunityId, Thread, Topic } from '../shared/types.js';
+import type { Thread, Topic } from '../shared/types.js';
 import { COMMUNITIES } from '../shared/types.js';
 
 // 全局报错浮层：宿主里出任何异常都写进 #msg2，空白页时也能定位
@@ -57,7 +57,6 @@ body[data-pane="settings"] #b-refresh{display:none}
 .nrow{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);font:inherit}
 .nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere;opacity:.8}
 .nrow .xp{display:block;font-size:12.5px;opacity:.6;margin-top:1px}
-.nrow .src{display:block;font-size:11.5px;color:var(--oc-muted,#999);margin-top:1px}
 .nrow .aibtn{flex:0 0 auto;align-self:center;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 9px;white-space:nowrap}
 .nrow .aibtn:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 .nrow .aisum{flex:1 1 100%;display:flex;gap:8px;align-items:flex-start;font-size:12.5px;line-height:1.7;opacity:.8;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
@@ -92,7 +91,6 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
 #cfgside input,#cfgside select{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
 #cfgver{padding:2px 10px 6px;font-size:11px}
 </style>
-<div style="display:flex;flex:1;min-height:0;width:100%" id="cols">
 <aside>
   <div class="sec" id="topicbar"><span id="title-list">话题 <span id="tcount" class="mut"></span></span><span id="title-settings">设置</span><span class="spacer"></span><button class="btn icon" id="b-refresh" title="手动刷新">↻</button><button class="btn icon" id="b-settings" title="设置与信息来源">⚙</button></div><div id="catchips"></div><div id="topics"></div><div id="msg2"></div><div class="mut" id="srcerr" style="padding:2px 10px"></div>
   <div id="settingswrap" hidden>
@@ -111,15 +109,14 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
     <div id="srclist" class="srclist"></div>
     <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
   </div>
-</aside>
-</div>`;
+</aside>`;
 
 const $ = <T extends HTMLElement>(id: string): T => document.querySelector(`#${id}`) as T;
 const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.17.0-send';
+const BUILD = 'v0.17.1-clean';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -201,7 +198,6 @@ const svc = async (method: string, path: string, body?: string): Promise<{ statu
   return host.serviceRequest({ method: method as 'GET' | 'POST', path: p, body });
 };
 
-const srcName = (_c: { name: string }, _ch: { name: string }, _multi: boolean): string => '';
 
 // chips：固定 16 个（全部 + CATS），只更新数字和选中态，绝不重建——避免换行位置跳动
 function updateChipCounts(): void {

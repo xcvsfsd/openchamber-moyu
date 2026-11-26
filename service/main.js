@@ -574,13 +574,7 @@ var millis = (v) => {
 };
 var LD = "https://linux.do";
 var LD_PATHS = {
-  latest: "/latest.rss",
-  top: "/top.rss?period=daily",
-  develop: "/c/develop/4.rss",
-  gossip: "/c/gossip/11.rss",
-  resource: "/c/resource/14.rss",
-  welfare: "/c/welfare/36.rss",
-  news: "/c/news/34.rss"
+  latest: "/latest.rss"
 };
 var cdnFix = (s) => s.replace(/https:\/\/linux\.do\/(?=(?:user_avatar|letter_avatar|images\/emoji)\/)/g, "https://cdn.ldstatic.com/");
 var linuxdoList = async (channel, proxy) => {
@@ -1555,16 +1549,6 @@ var server = http.createServer((req, res) => {
         json(res, 200, { ok: false, error: netError(e).message });
       }
     })();
-    return;
-  }
-  if (req.method === "POST" && ["/session", "/reply", "/like", "/upload", "/notifications"].includes(url.pathname)) {
-    readBody(req).then(() => {
-      if (url.pathname === "/session")
-        return json(res, 200, { ok: true, account: null });
-      if (url.pathname === "/notifications")
-        return json(res, 200, { ok: false, error: "登录后可看通知（MVP 未接登录）" });
-      return json(res, 200, { ok: false, error: "匿名不能操作，登录后可用（MVP 未接登录）" });
-    });
     return;
   }
   return json(res, 404, { ok: false, error: "not-found" });

@@ -65,6 +65,7 @@ button:disabled{opacity:.5}
 div.nrow:hover{background:var(--oc-hover,#8881)}
 .nrow.read .tt{opacity:.45}
 .nrow.read .xp{opacity:.3}
+.nrow.read .aisum{opacity:.45}
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
 #cfgver{padding:2px 10px 6px;font-size:11px}
@@ -89,7 +90,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.14.0-sort';
+const BUILD = 'v0.14.1-sumdim';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 

@@ -19,9 +19,10 @@ window.addEventListener('unhandledrejection', (e) => {
   showBootErrors();
 });
 
-// 无可抓正文的源：头条 ✦ 先联网搜索再总结；rebang 源自带摘要，直接用摘要总结
-const TITLE_ONLY: readonly string[] = ['toutiao', 'weibo', 'douyin'];
-const EXCERPT_ONLY: readonly string[] = ['news'];
+// rebang 聚合源：详情页拿不到正文，只有列表里那份摘要（可能为空）
+const PLATFORM_SRC: readonly string[] = ['news', 'tech', 'fin', 'ent', 'community', 'dev', 'shopping', 'weibo', 'douyin'];
+// 无可抓正文的源：有摘要用摘要，没摘要联网搜索；头条同样走联网
+const TITLE_ONLY: readonly string[] = ['toutiao', ...PLATFORM_SRC];
 // AI 分类候选（固定集合，避免碎片化）
 const CATS = ['AI科技', '数码', '互联网', '财经', '时政', '社会', '娱乐', '体育', '汽车', '房产', '教育', '健康', '科学', '游戏', '其他'];
 const LIST_TTL = 3 * 60 * 1000;
@@ -92,7 +93,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.14.6-chips';
+const BUILD = 'v0.14.7-webfall';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -337,7 +338,6 @@ const takeReadSnap = (): void => { readSnap = new Set(readSet); };
 
 // 消息标签：日期 + 来源（无则不显示）
 const COMM_NAME = new Map(COMMUNITIES.map((c) => [c.id as string, c.name]));
-const PLATFORM_SRC: readonly string[] = ['news', 'tech', 'fin', 'ent', 'community', 'dev', 'shopping', 'weibo', 'douyin'];
 const srcLabel = (t: Topic): string =>
   (PLATFORM_SRC as readonly string[]).includes(t.community) && t.author ? t.author : (COMM_NAME.get(t.community) ?? '');
 const fmtDay = (ts: number | null): string => {
@@ -522,10 +522,10 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
   try {
     let s = sumOf(t);
     if (!s) {
-      // rebang 源自带摘要：直接用摘要总结，不额外请求正文
+      // rebang 源只有摘要：直接用，不请求 /thread；没摘要就交给下面的联网兜底
       let text = '';
-      if ((EXCERPT_ONLY as readonly string[]).includes(t.community) && t.excerpt && t.excerpt.length >= 30) {
-        text = t.excerpt.slice(0, 2500);
+      if ((PLATFORM_SRC as readonly string[]).includes(t.community)) {
+        text = t.excerpt && t.excerpt.length >= 30 ? t.excerpt.slice(0, 2500) : '';
       } else {
         const r = await svc('GET', `/thread?community=${t.community}&id=${encodeURIComponent(t.id)}&page=1`);
         const j = JSON.parse(r.body) as { ok: boolean; thread?: Thread; error?: string };

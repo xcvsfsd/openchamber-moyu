@@ -481,7 +481,7 @@ var modelRefsOf = (value) => {
 };
 var modelCatalog = (s) => {
   const seen = new Map;
-  for (const list of [s.favoriteModels, s.recentModels, s.hiddenModels]) {
+  for (const list of [s.favoriteModels, s.recentModels]) {
     for (const m of modelRefsOf(list))
       seen.set(`${m.providerID}/${m.modelID}`, m);
   }

@@ -40,7 +40,8 @@ const modelRefsOf = (value: unknown): ModelRef[] => {
 };
 const modelCatalog = (s: Record<string, unknown>): ModelRef[] => {
   const seen = new Map<string, ModelRef>();
-  for (const list of [s.favoriteModels, s.recentModels, s.hiddenModels]) {
+  // 与 OpenChamber 选择器同口径：只看「收藏」和「最近」，不包含已隐藏的模型
+  for (const list of [s.favoriteModels, s.recentModels]) {
     for (const m of modelRefsOf(list)) seen.set(`${m.providerID}/${m.modelID}`, m);
   }
   const ov = typeof s.smallModelOverride === 'string' ? s.smallModelOverride.trim() : '';

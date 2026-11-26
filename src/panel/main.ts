@@ -83,7 +83,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.11.0-fast';
+const BUILD = 'v0.11.1-feedfix';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -109,6 +109,47 @@ const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;'
 
 const storeGet = async (k: string): Promise<unknown> => { try { return await host.storage.get(k); } catch { return undefined; } };
 const storeSet = async (k: string, v: unknown): Promise<void> => { try { await host.storage.set(k, v as never); } catch { /* 忽略，页内保持 */ } };
+
+// 信息流缓存：单条 value 上限 64KB，话题多时必须分片（meta 记分片数）
+const FEED_META = 'moyu:feed';
+const FEED_CHUNK = 48000;
+const saveFeed = async (): Promise<void> => {
+  try {
+    const rows = topics.map((t) => [t.community, t.id, t.title, t.author, t.channel, t.replies, t.time, t.url, t.excerpt ?? '']);
+    const s = JSON.stringify({ at: listAt, failed, rows });
+    const n = Math.max(1, Math.ceil(s.length / FEED_CHUNK));
+    await host.storage.set(FEED_META, { at: listAt, failed, parts: n } as never);
+    const parts: string[] = [];
+    for (let i = 0; i < n; i++) parts.push(s.slice(i * FEED_CHUNK, (i + 1) * FEED_CHUNK));
+    await Promise.all(parts.map((p, i) => host.storage.set(`moyu:feed:p${i}`, p as never)));
+    for (let i = n; i < n + 4; i++) { try { await host.storage.delete(`moyu:feed:p${i}`); } catch { /* 无旧分片 */ } }
+  } catch { /* 缓存失败不影响列表 */ }
+};
+const loadFeed = async (): Promise<boolean> => {
+  try {
+    const meta = await storeGet(FEED_META) as { at?: unknown; failed?: unknown; parts?: unknown } | undefined;
+    if (!meta || typeof meta.at !== 'number' || typeof meta.parts !== 'number') return false;
+    const n = meta.parts as number;
+    if (n < 1 || n > 40) return false;
+    const bufs: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const p = await storeGet(`moyu:feed:p${i}`);
+      if (typeof p !== 'string') return false;
+      bufs.push(p);
+    }
+    const d = JSON.parse(bufs.join('')) as { at?: unknown; failed?: unknown; rows?: unknown };
+    if (typeof d.at !== 'number' || !Array.isArray(d.rows) || d.rows.length === 0) return false;
+    listAt = d.at;
+    failed = Array.isArray(d.failed) ? (d.failed as string[]) : [];
+    topics = (d.rows as unknown[][]).map((r) => ({
+      community: r[0] as Topic['community'], id: String(r[1] ?? ''), title: String(r[2] ?? ''),
+      author: String(r[3] ?? ''), avatar: null, channel: typeof r[4] === 'string' ? r[4] : null,
+      replies: typeof r[5] === 'number' ? r[5] : null, time: typeof r[6] === 'number' ? r[6] : null,
+      url: String(r[7] ?? ''), excerpt: typeof r[8] === 'string' && r[8] ? (r[8] as string) : null,
+    } as Topic)).filter((t) => t.title && t.id);
+    return topics.length > 0;
+  } catch { return false; }
+};
 
 const svc = async (method: string, path: string, body?: string): Promise<{ status: number; body: string }> => {
   // 代理跟每个请求走（service 读不到宿主 env），?proxy= 与 x-proxy 等价这里统一拼 query
@@ -355,7 +396,7 @@ const pollAll = async (force = false): Promise<void> => {
       seen.add(k);
       return true;
     });
-    void storeSet('moyu:feed', { at: listAt, topics, failed });
+    void saveFeed();
     say('');
     paintList();
     void classifyAll(run);
@@ -403,11 +444,8 @@ void (async () => {
         if (typeof v === 'string') catMem.set(k, v);
       }
     }
-    const fd = await storeGet('moyu:feed') as { at?: unknown; topics?: unknown; failed?: unknown } | undefined;
-    if (fd && typeof fd.at === 'number' && Array.isArray(fd.topics) && fd.topics.length > 0) {
-      listAt = fd.at;
-      topics = fd.topics as Topic[];
-      failed = Array.isArray(fd.failed) ? (fd.failed as string[]) : [];
+    const fd = await loadFeed();
+    if (fd) {
       paintList();
       void classifyAll(++feedRun);
       return;

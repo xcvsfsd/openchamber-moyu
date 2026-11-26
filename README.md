@@ -58,13 +58,21 @@
 
 ## 安装
 
-OpenChamber → 设置 → 扩展 → 添加本地路径：
+两种方式：
+
+1. GitHub（推荐，多机同步、更新方便）：
+
+```text
+https://github.com/xcvsfsd/openchamber-moyu
+```
+
+2. 本地目录（开发调试，改完 `bun run build` 即生效）：
 
 ```text
 /home/liaoz/code/openchamber-moyu
 ```
 
-批准 `service` 和 `model` 能力。改完源码执行 `bun run build` 重新生成 `panel/` 与 `service/`（宿主不编译）。
+安装后批准 `service` 和 `model` 能力。
 
 ## 代理
 

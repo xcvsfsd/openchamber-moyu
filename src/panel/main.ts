@@ -42,12 +42,12 @@ body{margin:0;font:14px/1.6 var(--oc-font,system-ui,sans-serif);background:var(-
 aside{width:100%;display:flex;flex-direction:column;padding:10px 8px;gap:2px;overflow-y:auto}
 .sec{font-size:12px;color:var(--oc-muted,#999);padding:8px 10px 4px}
 .nrow{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;width:100%;text-align:left;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--oc-fg,inherit);font:inherit}
-.nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere}
+.nrow .tt{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere;opacity:.8}
+.nrow .xp{display:block;font-size:12.5px;opacity:.6;margin-top:1px}
 .nrow .src{display:block;font-size:11.5px;color:var(--oc-muted,#999);margin-top:1px}
 .nrow .aibtn{flex:0 0 auto;align-self:center;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 9px;white-space:nowrap}
 .nrow .aibtn:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
-.nrow .aisum{flex:1 1 100%;font-size:12.5px;line-height:1.7;opacity:.92;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
-.nrow .xp{display:block;font-size:12.5px;opacity:.8;margin-top:1px}
+.nrow .aisum{flex:1 1 100%;font-size:12.5px;line-height:1.7;opacity:.8;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
 .cathead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:16px 10px 6px;font-weight:700;font-size:13px;color:var(--oc-fg,inherit);border-bottom:1px solid var(--oc-border,#8883);margin-bottom:2px}
 .cathead .cu{font-weight:400;font-size:11px;color:var(--oc-muted,#999)}
 .nrow .tag{font-size:11px;color:var(--oc-muted,#999);opacity:.75;margin-left:6px;white-space:nowrap}
@@ -90,7 +90,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.14.2-inline';
+const BUILD = 'v0.14.3-dim';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 

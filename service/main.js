@@ -6,15 +6,7 @@ var COMMUNITIES = [
   {
     id: "linuxdo",
     name: "linux.do",
-    channels: [
-      { id: "latest", name: "最新" },
-      { id: "top", name: "热门" },
-      { id: "develop", name: "开发调优" },
-      { id: "gossip", name: "搞七捻三" },
-      { id: "resource", name: "资源荟萃" },
-      { id: "welfare", name: "福利羊毛" },
-      { id: "news", name: "前沿快讯" }
-    ]
+    channels: [{ id: "latest", name: "最新" }]
   },
   {
     id: "v2ex",
@@ -24,9 +16,7 @@ var COMMUNITIES = [
       { id: "latest", name: "最新" },
       { id: "programmer", name: "程序员" },
       { id: "share", name: "分享发现" },
-      { id: "create", name: "分享创造" },
-      { id: "qna", name: "问与答" },
-      { id: "jobs", name: "酷工作" }
+      { id: "qna", name: "问与答" }
     ]
   },
   { id: "toutiao", name: "今日头条", channels: [{ id: "hot", name: "热榜" }] },
@@ -457,15 +447,36 @@ if (!port || !token) {
 var FETCH_TIMEOUT_MS = 15000;
 var LIST_CACHE_TTL_MS = 3 * 60 * 1000;
 var BODY_MAX = 256 * 1024;
-var lastStart = 0;
-var pace = async () => {
-  const gap = 1000 - (Date.now() - lastStart);
+var lastStartByHost = new Map;
+var gateByHost = new Map;
+var PACE_BY_HOST = {
+  "linux.do": 1600,
+  "www.v2ex.com": 1200
+};
+var PACE_DEFAULT = 250;
+var pace = async (target) => {
+  let host = "default";
+  if (target) {
+    try {
+      host = new URL(target).hostname;
+    } catch {}
+  }
+  const prev = gateByHost.get(host) ?? Promise.resolve();
+  let release;
+  const gate = new Promise((r) => {
+    release = r;
+  });
+  gateByHost.set(host, prev.then(() => gate));
+  await prev;
+  const gapMs = PACE_BY_HOST[host] ?? PACE_DEFAULT;
+  const gap = gapMs - (Date.now() - (lastStartByHost.get(host) ?? 0));
   if (gap > 0)
     await new Promise((r) => setTimeout(r, gap));
-  lastStart = Date.now();
+  lastStartByHost.set(host, Date.now());
+  release();
 };
 var timedFetch = async (url, proxy) => {
-  await pace();
+  await pace(url);
   const ctrl = new AbortController;
   const h = await h2get(url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
   const headers = new Headers(h.headers);
@@ -525,6 +536,8 @@ var linuxdoList = async (channel, proxy) => {
   const r = await timedFetch(LD + path, proxy);
   if (r.status === 403)
     throw new Error("linux.do 暂时拦住了请求（403），过一会儿再试");
+  if (r.status === 429)
+    throw new Error("linux.do 限流中（请求过密），过几分钟点 ↻ 再试");
   if (r.status !== 200)
     throw new Error(`linux.do 返回了 ${r.status}`);
   const body = await r.text();
@@ -610,7 +623,7 @@ var v2checked = async (url, proxy, missing) => {
       const mins = Math.max(1, Math.ceil((reset * 1000 - Date.now()) / 60000));
       throw new Error(`V2EX 的请求额度用完了，${mins} 分钟后恢复`);
     }
-    throw new Error("V2EX 暂时拒绝了请求，过一会儿再试");
+    throw new Error("V2EX 限流中，过几分钟点 ↻ 再试");
   }
   if (r.status === 404 && missing)
     throw new Error(missing);
@@ -686,7 +699,7 @@ var v2exThread = async (id, page, proxy) => {
 };
 var stripTags = (s) => s.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).trim();
 var h2post = async (url, payload, proxy) => {
-  await pace();
+  await pace(url);
   const ctrl = new AbortController;
   const h = await h2get(url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy, method: "POST", body: JSON.stringify(payload) });
   if (h.status !== 200)
@@ -833,7 +846,7 @@ var toutiaoList = async (proxy) => {
 };
 var oscExcerpt = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
 var oschinaList = async (proxy) => {
-  await pace();
+  await pace("https://www.oschina.net/news/rss");
   const ctrl = new AbortController;
   let raw;
   try {
@@ -867,7 +880,7 @@ var oschinaList = async (proxy) => {
   }).filter((t) => t.title);
 };
 var solidotList = async (proxy) => {
-  await pace();
+  await pace("https://www.solidot.org/index.rss");
   const ctrl = new AbortController;
   let raw;
   try {
@@ -955,7 +968,7 @@ var ithomeThread = async (id, proxy) => {
     throw new Error("帖子不存在");
   const safeUrl = t.url.replace(/&/g, "&amp;");
   const linkCard = `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
-  await pace();
+  await pace(t.url);
   const ctrl = new AbortController;
   let raw;
   try {
@@ -1118,7 +1131,7 @@ var bingSearch = async (q, proxy) => {
   const hit = searchCache.get(key);
   if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL_MS)
     return hit.results;
-  await pace();
+  await pace("https://www.bing.com/search");
   const ctrl = new AbortController;
   let body;
   try {
@@ -1297,7 +1310,7 @@ var server = http.createServer((req, res) => {
     if (u.protocol !== "https:" || !allowed)
       return json(res, 400, { ok: false, error: "bad-host" });
     (async () => {
-      await pace();
+      await pace(u.toString());
       const ctrl = new AbortController;
       const px = proxyOf(req, url) ?? undefined;
       try {

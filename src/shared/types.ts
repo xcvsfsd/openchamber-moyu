@@ -34,20 +34,15 @@ export type ForumNotification = {
 export const COMMUNITIES: CommunityInfo[] = [
   {
     id: 'linuxdo', name: 'linux.do',
-    channels: [
-      { id: 'latest', name: '最新' }, { id: 'top', name: '热门' },
-      { id: 'develop', name: '开发调优' }, { id: 'gossip', name: '搞七捻三' },
-      { id: 'resource', name: '资源荟萃' }, { id: 'welfare', name: '福利羊毛' },
-      { id: 'news', name: '前沿快讯' },
-    ],
+    // 融合流只拉 latest（已跨版块，覆盖 develop/gossip 等）；多频道会触发 429
+    channels: [{ id: 'latest', name: '最新' }],
   },
   {
     id: 'v2ex', name: 'V2EX',
     channels: [
       { id: 'hot', name: '最热' }, { id: 'latest', name: '最新' },
       { id: 'programmer', name: '程序员' }, { id: 'share', name: '分享发现' },
-      { id: 'create', name: '分享创造' }, { id: 'qna', name: '问与答' },
-      { id: 'jobs', name: '酷工作' },
+      { id: 'qna', name: '问与答' },
     ],
   },
   { id: 'toutiao', name: '今日头条', channels: [{ id: 'hot', name: '热榜' }] },

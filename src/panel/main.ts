@@ -72,6 +72,7 @@ div.nrow:hover{background:var(--oc-hover,#8881)}
     <div class="mut">HTTP 代理（宿主不透传系统代理，直连失败时填）。只存本机。</div>
     <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7897（留空=直连）" />
     <button class="btn primary" id="b-save">保存并测试</button>
+    <button class="btn" id="b-clearcache" title="删掉分类与总结缓存，用当前模型重算">清空 AI 缓存</button>
     <div class="mut" id="cfg-out"></div>
   </div>
   <div class="mut" id="cfgver"><span id="cname"></span> · <span id="build"></span></div>
@@ -83,7 +84,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.11.1-feedfix';
+const BUILD = 'v0.11.3-pace';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -178,7 +179,9 @@ const paintChips = (cats: string[]): void => {
   }
 };
 
-const ckey = (t: Topic): string => `moyu:cat:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
+// AI 结果缓存版本：换模型后删旧 key（不区分模型的旧结果会挡住新模型效果）
+const AI_VER = 'm2';
+const ckey = (t: Topic): string => `moyu:cat:${AI_VER}:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
 
 const paintList = (): void => {
   const present = [...new Set(topics.map((t) => catMem.get(ckey(t))).filter((c): c is string => !!c))];
@@ -220,7 +223,7 @@ const saveCats = (): void => {
   let obj = Object.fromEntries(catMem);
   const keys = Object.keys(obj);
   if (keys.length > 1000) obj = Object.fromEntries(keys.slice(-1000).map((k) => [k, obj[k]]));
-  void storeSet('moyu:cats', obj);
+  void storeSet(`moyu:cats:${AI_VER}`, obj);
 };
 const classifyAll = async (run: number): Promise<void> => {
   if (catsOff) return;
@@ -284,7 +287,7 @@ const htmlText = (html: string): string =>
 const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Promise<void> => {
   const old = row.querySelector('.aisum');
   if (old) { old.remove(); return; } // 再点收起
-  const key = `moyu:csum:${t.community}:${t.id}`;
+  const key = `moyu:csum:${AI_VER}:${t.community}:${t.id}`;
   btn.disabled = true;
   const label = btn.textContent;
   btn.textContent = '…';
@@ -404,6 +407,25 @@ const pollAll = async (force = false): Promise<void> => {
 };
 
 $('b-refresh').onclick = () => { listAt = 0; void pollAll(true); };
+// 清空 AI 缓存（分类 + 总结）：换模型后点一下，再用当前模型重算
+$('b-clearcache').onclick = async (): Promise<void> => {
+  const out = $('cfg-out');
+  out.textContent = '正在清空 AI 缓存…';
+  try {
+    const keys = await host.storage.keys();
+    const drop = keys.filter((k) => /^moyu:(cat|csum|cats)(:|$)/.test(k));
+    await Promise.all(drop.map((k) => host.storage.delete(k).catch(() => undefined)));
+    catMem.clear();
+    catsOff = false;
+    catDone = 0; catTotal = 0; catRunning = false;
+    out.textContent = `已清 ${drop.length} 条，正在用当前模型重算分类…`;
+    void classifyAll(++feedRun);
+    await host.toast({ kind: 'success', message: `已清空 AI 缓存（${drop.length} 条）` });
+  } catch (e) {
+    out.textContent = `清空失败：${e instanceof Error ? e.message : '未知错误'}`;
+  }
+};
+
 $('b-save').onclick = async () => {
   const v = (document.querySelector('#cfg-proxy') as HTMLInputElement).value.trim();
   if (v && !/^https?:\/\/.+/.test(v)) { $('cfg-out').textContent = '格式不对，要 http(s)://host:port'; return; }
@@ -438,7 +460,7 @@ host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 void (async () => {
   await loadPrefs();
   try {
-    const cm = await storeGet('moyu:cats');
+    const cm = await storeGet(`moyu:cats:${AI_VER}`);
     if (cm && typeof cm === 'object') {
       for (const [k, v] of Object.entries(cm as Record<string, unknown>)) {
         if (typeof v === 'string') catMem.set(k, v);

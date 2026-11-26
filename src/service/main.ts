@@ -14,18 +14,36 @@ const FETCH_TIMEOUT_MS = 15_000;
 const LIST_CACHE_TTL_MS = 3 * 60 * 1000; // moyu：列表缓存 3 分钟
 const BODY_MAX = 256 * 1024;
 
-// 匿名读队列：开始时间至少相隔 1 秒（moyu 降压），失败不自动重试
-let lastStart = 0;
-const pace = async (): Promise<void> => {
-  const gap = 1000 - (Date.now() - lastStart);
+// 请求排队：按站点分队列，真正串行（原来的 1 秒间隔在并发下会同时穿过去，触发 429）
+// 面板会一次性并发 20 个榜单，所以这里必须按 host 排队，不能只靠单点时间戳。
+const lastStartByHost = new Map<string, number>();
+const gateByHost = new Map<string, Promise<void>>();
+const PACE_BY_HOST: Record<string, number> = {
+  'linux.do': 1600,
+  'www.v2ex.com': 1200,
+};
+const PACE_DEFAULT = 250;
+const pace = async (target?: string): Promise<void> => {
+  let host = 'default';
+  if (target) {
+    try { host = new URL(target).hostname; } catch { /* 保持 default */ }
+  }
+  const prev = gateByHost.get(host) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  gateByHost.set(host, prev.then(() => gate));
+  await prev;
+  const gapMs = PACE_BY_HOST[host] ?? PACE_DEFAULT;
+  const gap = gapMs - (Date.now() - (lastStartByHost.get(host) ?? 0));
   if (gap > 0) await new Promise((r) => setTimeout(r, gap));
-  lastStart = Date.now();
+  lastStartByHost.set(host, Date.now());
+  release();
 };
 
 import { h2get, h1get } from './net.js';
 type FetchLike = { status: number; headers: { get(n: string): string | null }; text(): Promise<string>; json(): Promise<unknown>; ok: boolean };
 const timedFetch = async (url: string, proxy?: string | null): Promise<FetchLike> => {
-  await pace();
+  await pace(url);
   const ctrl = new AbortController();
   const h = await h2get(url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy });
   const headers = new Headers(h.headers as Record<string, string>);
@@ -71,6 +89,7 @@ const linuxdoList = async (channel: string, proxy?: string | null): Promise<Topi
   if (!path) throw new Error(`linux.do 没有这个板块：${channel}`);
   const r = await timedFetch(LD + path, proxy);
   if (r.status === 403) throw new Error('linux.do 暂时拦住了请求（403），过一会儿再试');
+  if (r.status === 429) throw new Error('linux.do 限流中（请求过密），过几分钟点 ↻ 再试');
   if (r.status !== 200) throw new Error(`linux.do 返回了 ${r.status}`);
   const body = await r.text();
   if (!body.includes('<rss')) throw new Error('linux.do 返回的内容读不懂');
@@ -142,7 +161,7 @@ const v2checked = async (url: string, proxy?: string | null, missing?: string): 
       const mins = Math.max(1, Math.ceil((reset * 1000 - Date.now()) / 60000));
       throw new Error(`V2EX 的请求额度用完了，${mins} 分钟后恢复`);
     }
-    throw new Error('V2EX 暂时拒绝了请求，过一会儿再试');
+    throw new Error('V2EX 限流中，过几分钟点 ↻ 再试');
   }
   if (r.status === 404 && missing) throw new Error(missing);
   if (r.status !== 200) throw new Error(`V2EX 返回了 ${r.status}`);
@@ -207,7 +226,7 @@ const stripTags = (s: string): string =>
 
 // 掘金热门：公开推荐 API（POST，需带 client_type）
 const h2post = async (url: string, payload: unknown, proxy?: string | null): Promise<unknown> => {
-  await pace();
+  await pace(url);
   const ctrl = new AbortController();
   const h = await h2get(url, ctrl.signal, { timeoutMs: FETCH_TIMEOUT_MS, proxy, method: 'POST', body: JSON.stringify(payload) });
   if (h.status !== 200) throw new Error(`掘金返回了 ${h.status}`);
@@ -323,7 +342,7 @@ const toutiaoList = async (proxy?: string | null): Promise<Topic[]> => {
 const oscExcerpt = (html: string): string =>
   html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220);
 const oschinaList = async (proxy?: string | null): Promise<Topic[]> => {
-  await pace();
+  await pace('https://www.oschina.net/news/rss');
   const ctrl = new AbortController();
   let raw: string;
   try {
@@ -353,7 +372,7 @@ const oschinaList = async (proxy?: string | null): Promise<Topic[]> => {
 
 // Solidot：官方 RSS（服务端直出，摘要即正文），走 HTTP/1.1
 const solidotList = async (proxy?: string | null): Promise<Topic[]> => {
-  await pace();
+  await pace('https://www.solidot.org/index.rss');
   const ctrl = new AbortController();
   let raw: string;
   try {
@@ -426,7 +445,7 @@ const ithomeThread = async (id: string, proxy?: string | null): Promise<Thread> 
   if (!t) throw new Error('帖子不存在');
   const safeUrl = t.url.replace(/&/g, '&amp;');
   const linkCard = `<p><a href="${safeUrl}">在浏览器中查看原文</a></p>`;
-  await pace();
+  await pace(t.url);
   const ctrl = new AbortController();
   let raw: string;
   try {
@@ -541,7 +560,7 @@ const bingSearch = async (q: string, proxy?: string | null): Promise<SearchHit[]
   const key = q.slice(0, 120);
   const hit = searchCache.get(key);
   if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL_MS) return hit.results;
-  await pace();
+  await pace('https://www.bing.com/search');
   const ctrl = new AbortController();
   let body: string;
   try {
@@ -696,7 +715,7 @@ const server = http.createServer((req, res) => {
     const allowed = /^(linux\.do|cdn\.ldstatic\.com|.*\.v2ex\.com|v2ex\.com|.*\.infoq\.cn|static001\.geekbang\.org)$/.test(u.hostname);
     if (u.protocol !== 'https:' || !allowed) return json(res, 400, { ok: false, error: 'bad-host' });
     (async () => {
-      await pace();
+      await pace(u.toString());
       const ctrl = new AbortController();
       const px = proxyOf(req, url) ?? undefined;
       try {

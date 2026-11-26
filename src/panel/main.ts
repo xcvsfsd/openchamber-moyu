@@ -84,7 +84,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.11.3-pace';
+const BUILD = 'v0.11.4-robust';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -249,13 +249,22 @@ const classifyAll = async (run: number): Promise<void> => {
           maxOutputTokens: 320,
         });
         if (run !== feedRun || catsOff) return;
+        // 宽容解析：模型可能输出 "1: AI科技" / "1. AI科技" / "1、AI科技" / "**1.** AI科技"
         const got: string[] = [];
         for (const ln of g.text.split('\n')) {
-          const m = /^\s*(\d+)\s*[:：]\s*(\S+)/.exec(ln);
+          const m = /^\s*(?:[-*•]\s*)?(?:\*\*|__)?\s*(\d+)\s*(?:\*\*|__)?\s*[.、:：)）]\s*(.+?)\s*$/.exec(ln);
           if (!m) continue;
-          got[Number(m[1])] = CATS.includes(m[2]!) ? m[2]! : '其他';
+          const raw = m[2]!.replace(/[*`]/g, '').trim();
+          const hit = CATS.find((c) => raw.startsWith(c)) ?? CATS.find((c) => raw.includes(c));
+          got[Number(m[1])] = hit ?? '其他';
         }
-        batch.forEach((t, j) => catMem.set(ckey(t), got[j] ?? '其他'));
+        // 模型跑偏（漏行/重编号）时整批标“其他”，避免错位串行
+        const parsed = got.filter(Boolean).length;
+        if (parsed < Math.ceil(batch.length * 0.6)) {
+          for (const t of batch) catMem.set(ckey(t), '其他');
+        } else {
+          batch.forEach((t, j) => catMem.set(ckey(t), got[j] ?? '其他'));
+        }
         saveCats();
       } catch (e) {
         const code = (e as { code?: string })?.code;

@@ -60,7 +60,11 @@ body[data-pane="settings"] #b-refresh{display:none}
 .nrow .src{display:block;font-size:11.5px;color:var(--oc-muted,#999);margin-top:1px}
 .nrow .aibtn{flex:0 0 auto;align-self:center;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 9px;white-space:nowrap}
 .nrow .aibtn:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
-.nrow .aisum{flex:1 1 100%;font-size:12.5px;line-height:1.7;opacity:.8;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
+.nrow .aisum{flex:1 1 100%;display:flex;gap:8px;align-items:flex-start;font-size:12.5px;line-height:1.7;opacity:.8;border-left:2px solid var(--oc-border,#8888);padding-left:8px;margin:2px 0 2px 2px}
+.nrow .aisum .sumtext{flex:1;min-width:0}
+.nrow .sendsum{flex:0 0 auto;border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:11px;padding:1px 7px;line-height:1.6}
+.nrow .sendsum:hover{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
+.nrow .sendsum:disabled{opacity:.5}
 .cathead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:16px 10px 6px;font-weight:700;font-size:13px;color:var(--oc-fg,inherit);border-bottom:1px solid var(--oc-border,#8883);margin-bottom:2px}
 .cathead .cu{font-weight:400;font-size:11px;color:var(--oc-muted,#999)}
 .nrow .tag{font-size:11px;color:var(--oc-muted,#999);opacity:.75;margin-left:6px;white-space:nowrap}
@@ -115,7 +119,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.16.1-pane';
+const BUILD = 'v0.17.0-send';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -376,6 +380,58 @@ const tagOf = (t: Topic): string => {
   return out.join('');
 };
 
+// 总结卡片：右侧“发送到会话”，把标题/来源/链接/总结交给当前会话继续讨论
+const sumCard = (t: Topic, summary: string): HTMLElement => {
+  const box = document.createElement('div');
+  box.className = 'aisum';
+  const span = document.createElement('span');
+  span.className = 'sumtext';
+  span.textContent = `✦ ${summary}`;
+  const btn = document.createElement('button');
+  btn.className = 'sendsum';
+  btn.title = '发送到会话，详细讨论';
+  btn.textContent = '➤';
+  btn.onclick = (e): void => {
+    e.stopPropagation();
+    void (async () => {
+      btn.disabled = true;
+      const label = btn.textContent;
+      btn.textContent = '…';
+      const day = fmtDay(t.time);
+      const src = srcLabel(t);
+      const meta = [day, src].filter(Boolean).join(' · ');
+      const payload = [
+        `【阅读】${t.title}`,
+        meta ? `来源：${meta}` : '',
+        t.url ? `链接：${t.url}` : '',
+        '',
+        `总结：${summary}`,
+        '',
+        '帮我详细讲讲这条：关键点、背景和可能的影响是什么？需要的话可以联网查最新进展。',
+      ].filter((line, i) => line !== '' || i === 3).join('\n');
+      try {
+        const r = await host.prompt({ text: payload, send: true });
+        if (r.sent !== 'sent') await host.prompt({ text: payload }).catch(() => undefined);
+        btn.textContent = '✓';
+      } catch (err) {
+        const code = (err as { code?: string })?.code;
+        btn.textContent = label;
+        btn.disabled = false;
+        if (code === 'NO_SESSION') say(esc('先在左侧打开或新建一个会话，再点发送'));
+        else if (code === 'NOT_GRANTED') say(esc('缺少 prompt 能力：设置 → 扩展里重新批准「阅读」'));
+        else if (code === 'SESSION_BUSY') {
+          await host.prompt({ text: payload }).catch(() => undefined);
+          btn.textContent = '✓';
+        } else say(esc(`发送失败${code ? ` [${code}]` : ''}：${err instanceof Error ? err.message : '未知错误'}`));
+        return;
+      }
+      setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 1500);
+    })();
+  };
+  box.append(span, btn);
+  return box;
+};
+
 const paintSources = (): void => {
   const box = document.querySelector('#srclist');
   const cnt = document.querySelector('#srccount');
@@ -431,12 +487,7 @@ const paintList = (): void => {
       d.appendChild(b);
       // 之前总结过的，直接铺出来
       const cachedSum = sumOf(t);
-      if (cachedSum) {
-        const se = document.createElement('div');
-        se.className = 'aisum';
-        se.textContent = `✦ ${cachedSum}`;
-        d.appendChild(se);
-      }
+      if (cachedSum) d.appendChild(sumCard(t, cachedSum));
       topicsEl.appendChild(d);
     }
   }
@@ -615,10 +666,7 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
       sumTime.set(key, Date.now());
       saveSums();
     }
-    const d = document.createElement('div');
-    d.className = 'aisum';
-    d.textContent = `✦ ${s}`;
-    row.appendChild(d);
+    row.appendChild(sumCard(t, s));
   } catch (e) {
     const code = (e as { code?: string })?.code;
     const msg = code === 'NO_MODEL' ? '无可用小模型'
@@ -626,7 +674,10 @@ const summarize = async (t: Topic, row: HTMLElement, btn: HTMLButtonElement): Pr
       : e instanceof Error ? e.message : '未知错误';
     const d = document.createElement('div');
     d.className = 'aisum';
-    d.textContent = `总结失败：${msg}`;
+    const sp = document.createElement('span');
+    sp.className = 'sumtext';
+    sp.textContent = `总结失败：${msg}`;
+    d.appendChild(sp);
     row.appendChild(d);
   } finally {
     btn.disabled = false;

@@ -60,6 +60,8 @@ button:disabled{opacity:.5}
 .err{background:#7f1d1d22;border:1px solid #7f1d1d66;border-radius:8px;padding:8px}
 .mut{font-size:12px;color:var(--oc-muted,#999)}
 div.nrow:hover{background:var(--oc-hover,#8881)}
+.nrow.read .tt{opacity:.45}
+.nrow.read .xp{opacity:.3}
 #cfgside{border-top:1px solid var(--oc-border,#8883);margin-top:6px;padding:8px 6px 4px;display:flex;flex-direction:column;gap:6px}
 #cfgside input{width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:inherit}
 #cfgver{padding:2px 10px 6px;font-size:11px}
@@ -84,7 +86,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.11.5-cache';
+const BUILD = 'v0.11.6-read';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -181,6 +183,32 @@ const paintChips = (cats: string[]): void => {
 
 const ckey = (t: Topic): string => `moyu:cat:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
 
+// 已读：移入标题即标记，字体变淡；按“源+标题指纹”记，序号型榜单刷新后也能对上
+const READ_KEY = 'moyu:read';
+const READ_MAX = 800;
+const readSet = new Set<string>();
+const readList: string[] = [];
+let readTimer: ReturnType<typeof setTimeout> | null = null;
+const tid = (s: string): string => {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.codePointAt(0)!) >>> 0;
+  return h.toString(36);
+};
+const rkey = (t: Topic): string => `${t.community}:${tid(t.title)}`;
+const markRead = (t: Topic): void => {
+  const k = rkey(t);
+  if (readSet.has(k)) return;
+  readSet.add(k);
+  readList.push(k);
+  if (readList.length > READ_MAX) {
+    const drop = readList.splice(0, readList.length - READ_MAX);
+    for (const d of drop) readSet.delete(d);
+  }
+  if (!readTimer) {
+    readTimer = setTimeout(() => { readTimer = null; void storeSet(READ_KEY, readList); }, 1000);
+  }
+};
+
 const paintList = (): void => {
   const present = [...new Set(topics.map((t) => catMem.get(ckey(t))).filter((c): c is string => !!c))];
   const ordered = CATS.filter((c) => present.includes(c));
@@ -202,9 +230,10 @@ const paintList = (): void => {
     for (const t of topics) {
       if (g && catMem.get(ckey(t)) !== g) continue;
       const d = document.createElement('div');
-      d.className = 'nrow';
+      d.className = 'nrow' + (readSet.has(rkey(t)) ? ' read' : '');
       const xcp = t.excerpt ? `<br><span class="xp">${esc(t.excerpt)}</span>` : '';
       d.innerHTML = `<span class="tt">${esc(t.title)}${xcp}</span>`;
+      d.onmouseenter = (): void => { markRead(t); d.classList.add('read'); };
       const b = document.createElement('button');
       b.className = 'aibtn';
       b.title = 'AI 总结这篇';
@@ -468,6 +497,13 @@ host.onReady((ctx) => { applyHostReady(ctx, document.documentElement); });
 void (async () => {
   await loadPrefs();
   try {
+    const rr = await storeGet(READ_KEY);
+    if (Array.isArray(rr)) {
+      for (const k of rr) {
+        if (typeof k !== 'string' || readSet.has(k)) continue;
+        readSet.add(k); readList.push(k);
+      }
+    }
     const cm = await storeGet('moyu:cats');
     if (cm && typeof cm === 'object') {
       for (const [k, v] of Object.entries(cm as Record<string, unknown>)) {

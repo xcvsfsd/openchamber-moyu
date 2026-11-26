@@ -1,66 +1,60 @@
 # openchamber-moyu
 
-一个 OpenChamber 扩展：V2EX / linux.do / 知乎 / 今日头条 / CSDN / 开源中国 / InfoQ（面板内切换社区），界面和 AI 聊天页一样。 port 自 [flyhero/antumi-moyu](https://github.com/flyhero/antumi-moyu)，设计思路照抄 moyu，**不套禅道面板那套**。
+一个 OpenChamber 扩展：把多个技术/资讯社区的热门内容汇成一个信息流，按需用本机小模型做分类和总结。
 
-- 话题列表是「会话」，楼主是用户消息，回帖是助手回答——全是假聊天，画在全屏 page 里，不碰真会话。
-- 单包七源：本目录即扩展（rail 图标“阅读”），面板内 社区 区切换，偏好按社区分别记住（默认 V2EX）。
-  - V2EX / linux.do：论坛全文（列表 RSS+API，正文 JSON）
-  - 知乎 / 今日头条 / CSDN / 开源中国：tophub.today 榜单直出（标题+直链+热度），点进正文是原文链接卡
-  - InfoQ 中国：官网首页直出（标题+直链）
-- 榜单每 3 分钟缓存一次，失败不自动重试，限流时按提示等一会儿手动刷（tophub 对高频抓取会 503）。
-- 匿名可读；登录/回复/点赞/通知先占位（service 按 moyu 语气回 need-login），正文链路已通。
+## 功能
+
+- **融合信息流**：打开就是一个列表，不选社区、不选频道。
+- **AI 分类**：按标题自动归入 AI科技 / 数码 / 互联网 / 财经 / 时政 / 社会 / 娱乐 / 体育 / 汽车 / 房产 / 教育 / 健康 / 科学 / 游戏 / 其他，顶部 chips 可只看某类。
+- **按需 AI 总结**：每条标题右侧 `✦`，点开才拉正文并用小模型总结，再点收起。
+  - 有正文的源：总结正文。
+  - 头条：原文页是 JS 空壳，改为用标题联网搜索（Bing）后总结，标注「联网版」；搜不到退回「标题版」。
+- **已读标记**：鼠标移入标题即记为已读，字体变淡；已读记录持久化，按「源+标题指纹」匹配，序号型榜单刷新后也能对上。
+- **手动刷新**：只有点 `↻` 才拉网，旁边显示上次更新时间。异常源（多为对侧限流）提示在列表最下方。
+- **跨源去重**：同一事件只留一条。
+
+## 消息源
+
+| 源 | 取数方式 | 详情 |
+| --- | --- | --- |
+| linux.do | 官方 `latest.rss` | 只拉 latest（跨版块，多频道会 429） |
+| V2EX | 公开 API | hot / latest / programmer / share / qna |
+| 掘金 | 推荐 API（POST） | 全文 markdown |
+| IT之家 | m 站列表 API | 正文服务端直出（走 HTTP/1.1） |
+| 今日头条 | 官方 hot-board | 只有标题，✦ 走联网搜索 |
+| 开源中国 | 官方新闻 RSS | RSS 摘要即正文 |
+| Solidot | 官方 RSS | RSS 摘要即正文 |
+| InfoQ 中国 | 官网首页 | 正文 SSR，`ProseMirror` 直抽 |
+
+> 知乎、CSDN 已移除：前者要登录、后者全站 JS 安全验证，直连与 tophub 都被挡，留着只会长期报错。
+
+## 缓存
+
+- 进入面板**不发任何网络请求**，直接读本地缓存（列表分片存在 `moyu:feed` + `moyu:feed:pN`）。
+- service 侧列表、正文各缓存 30 分钟；`↻` 带 `force=1` 强制绕过，所以点刷新一定是新数据。
+- AI 分类、总结永久缓存（`moyu:cats` / `moyu:cat:*` / `moyu:csum:*`）。**换模型后**点配置区「清空 AI 缓存」再 `↻`，才会用新模型重算。
+- 已读记录 `moyu:read`，上限 800 条。
+
+## 实现要点
+
+- 宿主 storage 单条 value 上限 64KB，信息流缓存按 48KB 分片。
+- 请求排队按 host 串行（linux.do 1.6s、V2EX 1s、其它 250ms）。单纯比较时间戳在并发下会同时穿过去，触发 429。
+- `host.generate` 用小模型（需 `model` 能力），分类解析容忍 `1: X` / `1. X` / `1、X` / `**1.** X` 等格式，漏行整批降级为「其他」而不是错位。
 
 ## 安装
 
-OpenChamber → 设置 → 扩展 → 粘贴本地路径安装（改完 `bun run build` 即生效）：
+OpenChamber → 设置 → 扩展 → 添加本地路径：
 
 ```text
 /home/liaoz/code/openchamber-moyu
 ```
 
-批准 `service` 能力，点 rail 图标或 Extension pages 进全屏。
+批准 `service` 和 `model` 能力。改完源码执行 `bun run build` 重新生成 `panel/` 与 `service/`（宿主不编译）。
 
-## 用法（对齐 moyu）
+## 代理
 
-- 顶部选频道，列表 3 分钟缓存，到期回页自动刷，`r` 手动刷。
-- 点话题看帖（楼主=用户消息，回帖=助手消息），底部「加载更多」翻页。
-- 输入框只存草稿（按社区+帖子保留），匿名点发送提示登录不发出，不自动重发。
-- 三开关：流式输出 / 图片折叠（点开经 service 代理加载） / 头像伪装（本地 Agent 标志）。
-- 快捷键（输入框里不触发）：`j/k` 上下帖，`n` 下一页，`r` 刷新，`o` 浏览器打开，`q` 离开，双 Esc 离开。
-- 帖子右上 ↗ 在系统浏览器打开，🔔 通知 MVP 提示登录。
+宿主启动 service 时会清掉环境变量，系统代理传不进来。面板配置区填 HTTP 代理（每请求以 `?proxy=` 传给 service），只存本机。
 
-## 设计对照（moyu → 本仓库）
+## 快捷键
 
-| moyu | 这里 |
-|---|---|
-| `contributes.pages[].entry` | `panel.entry + page:true`（Extension pages 全屏） |
-| 每次调用起 Node 进程 | service 常驻 host 进程，`POST/GET /list /thread /image` 无状态 handler，内存只留列表缓存 |
-| `browserSites/context.browser` 隔离登录 | 无对等物：MVP 只做匿名，登录改 `openUrl(登录页)+service 轮询 /session`（待接），Cookie 永不进 page/storage |
-| HTTP/2（Cloudflare 放行）+ CONNECT 隧道 + env 优先代理 + 1 秒队列 | `src/service/net.ts` 原样搬（Linux 只读 env），失败不自动重试，文案照 moyu |
-| page state 32KiB 单 writer | `host.storage` instance（草稿/位置）+ device（偏好），淘汰只丢旧阅读记录 |
-| DOMPurify 洗论坛 HTML，链接走 host | 同样，图片走 `/image` 代理转，CDN 头像做 `cdn.ldstatic.com` 改写 |
-
-## 开发
-
-```bash
-bun install
-bun run build      # tsc 隐含在 typecheck；输出 extensions/*/panel/main.js + service/main.js（必须提交）
-bunx tsc --noEmit  # 只检查
-```
-
-service 烟测：
-
-```bash
-OPENCHAMBER_SERVICE_PORT=18731 OPENCHAMBER_SERVICE_TOKEN=t bun run extensions/v2ex/service/main.js &
-curl -H "Authorization: Bearer t" "http://127.0.0.1:18731/list?community=v2ex&channel=hot" | head -c 300
-```
-
-## 限制（和 moyu 一致）
-
-- linux.do 限流/验证时按 moyu 文案提示，去浏览器完成验证再刷；V2EX 额度 600/小时用完按 `x-rate-limit-reset` 提示分钟数。
-- 图片默认折叠，论坛能看到 service 的 IP，和浏览器看帖一样。
-- 写操作（回复/点赞/通知）MVP 未接登录，一律回「登录后可用」，草稿保留。
-
-## License
-
-Apache-2.0（moyu 同协议）
+`r` 刷新 · `q` 离开 · 双击 Esc 离开（输入框聚焦时不触发）。

@@ -50,7 +50,7 @@ aside{width:100%;display:flex;flex-direction:column;padding:10px 8px;gap:2px;ove
 .nrow .xp{display:block;font-size:12.5px;opacity:.8;margin-top:1px}
 .cathead{font-size:12px;color:var(--oc-muted,#999);padding:10px 10px 2px;font-weight:700}
 #catchips{display:flex;gap:6px;flex-wrap:wrap;padding:2px 10px 4px}
-#catchips button{border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 10px;white-space:nowrap}
+#catchips button{border:1px solid var(--oc-border,#8888);border-radius:999px;background:transparent;color:var(--oc-muted,#999);cursor:pointer;font-size:12px;padding:2px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
 #catchips button.on{color:var(--oc-fg,inherit);border-color:var(--oc-primary,#3574f0)}
 button,select,input,textarea{font:inherit}
 .btn{padding:4px 10px;border:1px solid var(--oc-border,#8888);border-radius:8px;background:var(--oc-elevated,inherit);color:var(--oc-fg,inherit);cursor:pointer;white-space:nowrap}
@@ -87,7 +87,7 @@ const cname = $('cname');
 const topicsEl = $('topics');
 const chipsEl = $('catchips');
 
-const BUILD = 'v0.13.0-sumcache';
+const BUILD = 'v0.13.1-unread';
 cname.textContent = '阅读';
 (document.querySelector('#build') as HTMLElement).textContent = BUILD;
 
@@ -164,22 +164,38 @@ const svc = async (method: string, path: string, body?: string): Promise<{ statu
 
 const srcName = (_c: { name: string }, _ch: { name: string }, _multi: boolean): string => '';
 
+// chips 上的数字是未读数（划过即已读，数字会即时减）
+function updateChipCounts(): void {
+  const counts = new Map<string, number>();
+  let all = 0;
+  for (const t of topics) {
+    if (readSet.has(rkey(t))) continue;
+    all++;
+    const c = catMem.get(ckey(t));
+    if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
+  }
+  for (const b of chipsEl.querySelectorAll<HTMLButtonElement>('[data-cat]')) {
+    const cat = b.dataset.cat ?? '';
+    b.textContent = cat === '__all' ? `全部 ${all}` : `${cat} ${counts.get(cat) ?? 0}`;
+  }
+}
+
 const paintChips = (cats: string[]): void => {
   chipsEl.innerHTML = '';
   if (cats.length === 0) return;
   const all = document.createElement('button');
-  all.textContent = '全部';
+  all.dataset.cat = '__all';
   all.className = selCat === '' ? 'on' : '';
   all.onclick = () => { selCat = ''; paintList(); };
   chipsEl.appendChild(all);
   for (const c of cats) {
     const b = document.createElement('button');
-    const n = topics.filter((t) => catMem.get(ckey(t)) === c).length;
-    b.textContent = `${c} ${n}`;
+    b.dataset.cat = c;
     b.className = selCat === c ? 'on' : '';
     b.onclick = () => { selCat = selCat === c ? '' : c; paintList(); };
     chipsEl.appendChild(b);
   }
+  updateChipCounts();
 };
 
 const ckey = (t: Topic): string => `moyu:cat:${t.community}:${t.id}:${t.title.slice(0, 30)}`;
@@ -218,6 +234,7 @@ const markRead = (t: Topic): void => {
   if (!readTimer) {
     readTimer = setTimeout(() => { readTimer = null; void storeSet(READ_KEY, readList); }, 1000);
   }
+  updateChipCounts();
 };
 
 // 跨源去重：同一事件在不同站标题措辞不同，只靠完全相等不够
